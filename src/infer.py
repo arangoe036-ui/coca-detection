@@ -325,6 +325,13 @@ if __name__ == "__main__":
     ap.add_argument("--fit-calibration", action="store_true",
                     help="v2 A2: fit the density->hectares calibration k on this year's "
                          "official figure and save it (do this on 2023; reuse for other years).")
+    ap.add_argument("--year", type=int, default=None, help="override target year (v2 Part C/D)")
+    ap.add_argument("--grid-field", default=None,
+                    help="official coca-grid field for this year (e.g. coca2022_ for 2022)")
     args = ap.parse_args()
-    infer(load_config(args.config), args.image, args.checkpoint, args.threshold,
-          fit_calibration=args.fit_calibration)
+    cfg = load_config(args.config)
+    if args.year:
+        cfg["year"] = args.year
+    if args.grid_field:
+        cfg["labels"]["coca_grid_year_field"] = args.grid_field
+    infer(cfg, args.image, args.checkpoint, args.threshold, fit_calibration=args.fit_calibration)

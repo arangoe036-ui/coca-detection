@@ -266,5 +266,9 @@ if __name__ == "__main__":
     ap.add_argument("--season", type=int, default=None, help="season index (0..n-1)")
     ap.add_argument("--full", action="store_true",
                     help="full aoi.bbox, annual median composite, memory-safe lazy write")
+    ap.add_argument("--year", type=int, default=None, help="override target year (v2 Part C/D)")
     args = ap.parse_args()
-    export(load_config(args.config), quick=args.quick, season_idx=args.season, full=args.full)
+    cfg = load_config(args.config)
+    if args.year:
+        cfg["year"] = args.year
+    export(cfg, quick=args.quick, season_idx=args.season, full=args.full)

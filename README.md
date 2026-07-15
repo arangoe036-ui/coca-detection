@@ -26,7 +26,7 @@ See [`coca-detection-build-plan.md`](../coca-detection-build-plan.md) for the fu
 - [x] **P2 — Baseline model.** U-Net (18-ch). Two tasks via `model.task`: **regression** (coca fraction → calibrated hectares, current default) and segmentation (binary presence). Trained on the real geographic split. *Remaining lever: geo-pretrained encoder weights.*
 - [x] **P3 — Evaluation.** Held-out test blocks: IoU 0.665, F1 0.799, P 0.757, R 0.845, AP 0.877 (thr 0.504 tuned on val).
 - [x] **P4 — Inference & outputs.** Density raster + municipal choropleth (GeoJSON/CSV) + footprint polygons + density-map PNG. **Calibrated area: predicted 46,843 ha vs official 39,815 ha (1.18×). Per-municipality: Tibú 0.98, El Tarra 0.95, Teorama 1.05 of official.** (Binary-presence baseline was 9.2× — density regression fixed the calibration.)
-- [ ] **P5 — Map UI.** `ui/data/municipal_coca.geojson` now generated; Leaflet choropleth wiring pending.
+- [x] **P5 — Map UI.** Leaflet console (`ui/`): municipal choropleth (YlOrBr) over CARTO light + Esri imagery crossfade, dark side panel (totals, ranked hotspots with fly-to, legend, caveats). Serve with `python -m http.server` from `ui/`.
 - [ ] **P5 — Map UI** (Leaflet/MapLibre choropleth + year slider + high-res basemap).
 - [ ] **P6 — Stretch** (temporal model / plot-level detection).
 
