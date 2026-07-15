@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Colombia coca monitor — Catatumbo 2023</title>
+  <title>Colombia coca monitor — Catatumbo</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -19,11 +20,29 @@
           <span>Catatumbo, Norte de Santander</span>
           <label class="year">Year
             <select id="year" aria-label="Select year"></select>
+            <span id="nowcast-badge" class="badge" hidden title="No official census exists for this year yet (UNODC lags ~18 months). Figures are an unvalidated estimate.">nowcast · unvalidated</span>
           </label>
         </p>
       </header>
 
       <section id="totals" aria-label="Area totals"></section>
+
+      <section class="block">
+        <h2>Density overlay</h2>
+        <label class="ctl">Opacity <output id="op-val">80%</output>
+          <input id="opacity" type="range" min="0" max="100" value="80" />
+        </label>
+        <label class="ctl">Min cover shown <output id="th-val">5%</output>
+          <input id="threshold" type="range" min="0" max="30" value="5" />
+        </label>
+      </section>
+
+      <section class="block">
+        <h2>Measure</h2>
+        <button id="draw-btn" type="button">Draw area to sum hectares</button>
+        <div id="draw-result" class="chip" hidden></div>
+        <p class="hint">Approximate — computed on the downsampled overlay.</p>
+      </section>
 
       <section class="block">
         <h2>Hotspots</h2>
@@ -33,15 +52,15 @@
 
       <section class="block">
         <button id="basemap-toggle" type="button">Show imagery</button>
-        <p class="hint" id="inspect-hint">Zoom in past a municipality to auto-load high-resolution imagery.</p>
+        <p class="hint">Zoom in past a municipality to auto-load high-resolution imagery.</p>
       </section>
 
       <details id="howto" class="block">
         <summary>How to read this</summary>
         <div class="howto-body">
           <p>Totals and hotspot ranking are validated against Colombia's official ~1&nbsp;km grid, so <strong>totals and locations are reliable — individual plot boundaries are not</strong>. The imagery is for visual context; the model does not resolve single plots.</p>
-          <p>Satellite imagery is a multi-date mosaic and may not match 2023; remote areas may be lower resolution.</p>
-          <p>The model is calibrated on one region-year (Catatumbo, 2023).</p>
+          <p>Satellite imagery is a multi-date mosaic and may not match the analysis year; remote areas may be lower resolution.</p>
+          <p>Years without an official census (2025 onward) are shown as an <strong>unvalidated nowcast</strong> — UNODC figures lag roughly 18 months.</p>
         </div>
       </details>
 
@@ -57,6 +76,10 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
+  <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
+  <script src="https://unpkg.com/geoblaze@2.8.0/dist/geoblaze.web.min.js"></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

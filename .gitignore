@@ -13,6 +13,8 @@ ui/data/*
 *.pt
 *.pth
 checkpoints/
+# but DO keep the small downsampled COG(s) the map overlay needs (after *.tif so this wins)
+!ui/data/*_cog.tif
 
 # --- Python ---
 __pycache__/
