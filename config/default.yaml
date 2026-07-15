@@ -1,0 +1,136 @@
+# ============================================================================
+# Coca Detection — central config. All tunables live here (plan §14).
+# Values marked  # TBD  are Section-13 open questions; CONFIRM before running
+# any GEE export or training (P1+). The defaults below are placeholders so the
+# repo installs and config loads for P0 — they are NOT yet approved to run.
+# ============================================================================
+
+project:
+  name: coca-detection
+  seed: 42
+
+# --- Area of interest & time window (plan §13 Q1, Q2) ------------------------
+aoi:
+  region: catatumbo          # TBD: "catatumbo" (Norte de Santander) | "tumaco" (Nariño)
+  # Rough bounding box in lon/lat (WGS84). Placeholder for Catatumbo; refine before export.
+  bbox: [-73.30, 8.30, -72.40, 9.30]   # [min_lon, min_lat, max_lon, max_lat]
+  utm_epsg: 32618            # UTM zone 18N (Catatumbo). Tumaco ~ 32617.
+  # Small sub-AOI for the "smallest end-to-end slice" smoke test (plan §3). ~11 km box
+  # inside Catatumbo. Used by stac_export.py --quick before scaling to full `bbox`.
+  quick_bbox: [-72.90, 8.85, -72.80, 8.95]
+year: 2023                   # confirmed: Catatumbo 2023 (published ODC/datos.gov.co figure exists)
+
+# --- Imagery / STAC export (plan §6.1) ---------------------------------------
+# Backend: Microsoft Planetary Computer STAC (free, no GEE). See src/data/stac_export.py.
+imagery:
+  backend: planetary_computer       # planetary_computer | (future) cdse
+  stac_url: "https://planetarycomputer.microsoft.com/api/stac/v1"
+  s2_collection: "sentinel-2-l2a"   # PC STAC collection id
+  s1_collection: "sentinel-1-rtc"   # radiometric-terrain-corrected VV/VH (analysis-ready)
+  # PC asset keys are B02.. (10m: B02,B03,B04,B08; 20m: B05,B06,B07,B8A,B11,B12) + SCL.
+  s2_bands: [B02, B03, B04, B08, B05, B06, B07, B8A, B11, B12]
+  s1_bands: [vv, vh]
+  indices: [NDVI, EVI, SAVI, NDWI, NDRE, NBR]            # appended as extra bands
+  cloud_cover_max: 40        # eo:cloud_cover scene filter (%)
+  scl_mask_classes: [3, 8, 9, 10, 11]   # SCL: shadow, cloud med/high, cirrus, snow -> masked
+  n_seasonal_composites: 4   # median composites across the year (fills cloud gaps + phenology)
+  composite_reducer: median  # median | geomedian
+  # 20 m working resolution: official labels are ~1 km grid cells, so 20 m is ample
+  # detail and makes the full-AOI export tractable (4x less data than 10 m).
+  resolution_m: 20
+  full_subtile_deg: 0.3      # sub-tile size (deg) for the tiled full-AOI export
+  export_tile_px: 256
+  export_overlap_px: 32
+  cropland_mask: null        # null | "ESA/WorldCover/v200" | "GOOGLE/DYNAMICWORLD/V1"
+
+# --- Labels (plan §6.2) — resolved §13 Q4 -----------------------------------
+# ODC ArcGIS hosts are dead; the coca data lives on Socrata (datos.gov.co).
+labels:
+  socrata_domain: "https://www.datos.gov.co"
+  # Fine-grained ~1km coca-DENSITY grid (WGS84 GeoJSON, per-year hectares) -> training mask.
+  coca_grid_resource_id: "v3rx-q7t3"
+  coca_grid_year_field: null          # null -> computed "areacoca{year}" (e.g. areacoca2023)
+  coca_grid_geom_field: "the_geom"
+  coca_grid_id_field: "grilla1"
+  # Municipal coca hectares by DANE code -> validation table (no geometry).
+  validation_resource_id: "acs4-3wgp"
+  validation_year_field: null         # null -> computed "_{year}" (e.g. _2023)
+  # Municipality polygons for spatial joins (GADM level 2).
+  boundaries_url: "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_COL_2.json.zip"
+  # fraction: coca_ha / cell_area_ha per cell -> [0,1] target for DENSITY REGRESSION
+  # (sum(fraction * pixel_area) = calibrated hectares). binary/continuous kept for segmentation.
+  mask_type: fraction        # fraction(density regression) | continuous | binary
+  presence_threshold_ha: 0.5 # for binary masks: cell counts as coca if hectares >= this
+  min_mapping_unit_px: 4     # drop label specks smaller than this
+
+# --- Tiling & spatial split (plan §6.3) --------------------------------------
+tiling:
+  tile_px: 256
+  stride_px: 224             # overlap = tile_px - stride_px
+  split_block_km: 10         # coarse grid block size for spatial split
+  split_ratios: {train: 0.70, val: 0.15, test: 0.15}
+  oversample_positive: true  # weighted sampler favors positive tiles
+
+# --- Model (plan §7) ---------------------------------------------------------
+model:
+  # task drives target + loss + metrics:
+  #   regression   -> predict coca FRACTION per pixel; sum*area = calibrated hectares
+  #   segmentation -> predict binary presence (original baseline)
+  task: regression
+  arch: unet
+  encoder: "resnet34"        # TBD: swap to a SAT-pretrained encoder (SSL4EO / Prithvi / Clay / SatMAE)
+  encoder_weights: "ssl4eo"  # NOT plain imagenet (plan §4, §7.1); placeholder key
+  in_channels: null          # computed at runtime = len(s2_bands)+len(indices)+len(s1_bands)
+  classes: 1
+
+# --- Loss (plan §7.2) --------------------------------------------------------
+loss:
+  # regression -> mse (on sigmoid-bounded fraction); segmentation -> dice_focal
+  type: dice_focal           # dice_focal | bce_posweight | mse (auto-used when task=regression)
+  dice_weight: 1.0
+  focal_weight: 1.0
+  focal_gamma: 2.0
+  bce_pos_weight: 10.0       # used only if type == bce_posweight
+
+# --- Training (plan §7.3) ----------------------------------------------------
+train:
+  epochs: 50
+  batch_size: 16
+  lr: 0.001
+  optimizer: adamw
+  scheduler: cosine
+  amp: true                  # mixed precision
+  early_stop_metric: val_iou
+  early_stop_patience: 8
+  num_workers: 4
+  overfit_sanity_tiles: 8    # first prove the loop learns on a tiny subset (plan §7.3 gate)
+
+# --- Evaluation (plan §8) ----------------------------------------------------
+eval:
+  threshold: 0.5             # tuned on val in evaluate.py
+  metrics: [iou, f1, precision, recall]
+
+# --- Inference & map outputs (plan §9) ---------------------------------------
+infer:
+  window_px: 256
+  window_overlap_px: 32
+  morph_kernel_px: 3         # open/close to remove specks
+  min_polygon_ha: 0.25
+  admin_boundaries: "GADM"   # "GADM" | "DANE_MGN"
+  presence_fraction: 0.02    # regression: cover fraction above which a pixel is "present" (footprint polygons)
+
+# --- Map UI (plan §10) -------------------------------------------------------
+ui:
+  engine: leaflet            # leaflet | maplibre
+  basemap: esri_world_imagery   # esri_world_imagery | mapbox_satellite (plan §13 Q5)
+  mapbox_token: null
+
+# --- Paths (relative to repo root) -------------------------------------------
+paths:
+  data_dir: data
+  outputs_dir: outputs
+  tiles_dir: data/tiles
+  imagery_dir: data/imagery
+  labels_dir: data/labels
+  checkpoints_dir: outputs/checkpoints
+  ui_data_dir: ui/data
