@@ -1,0 +1,194 @@
+/* Coca monitor — earth-observation monitoring console.
+   Dark charcoal side panel + bright map canvas; one restrained amber accent;
+   sequential YlOrBr density ramp; monospace for instrument-like numbers. */
+
+:root {
+  --ink:        #14181c;   /* panel surface */
+  --ink-2:      #1b2127;   /* raised elements (stat tiles, list rows) */
+  --ink-3:      #232b33;   /* hover/border */
+  --text:       #e8eaed;   /* off-white primary */
+  --text-muted: #9aa3ad;   /* secondary/labels */
+  --accent:     #e6a01f;   /* cartographic signal amber — interactive only */
+  --line:       #2b333b;
+  --panel-w:    340px;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--sans);
+  font-weight: 400;
+  color: var(--text);
+  background: var(--ink);
+}
+
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ---- side panel ---- */
+#panel {
+  width: var(--panel-w);
+  flex: 0 0 var(--panel-w);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--ink);
+  border-right: 1px solid var(--line);
+  padding: 22px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+#panel header h1 {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  margin: 0 0 6px;
+}
+#panel .sub {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.year {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  text-transform: none;
+}
+.year select {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+h2 {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+.hint { margin: 0 0 10px; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+
+/* ---- stat tiles (AOI totals) ---- */
+#totals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat {
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.stat.wide { grid-column: 1 / -1; }
+.stat span { display: block; font-size: 11px; color: var(--text-muted); letter-spacing: 0.03em; }
+.stat b { font-family: var(--mono); font-weight: 500; font-size: 18px; color: var(--text); }
+.stat b .unit { font-size: 11px; color: var(--text-muted); margin-left: 3px; }
+
+/* ---- hotspot list ---- */
+.hotspots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.hotspots li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--ink-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+.hotspots li:hover, .hotspots li:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.hotspots li .rank { color: var(--text-muted); font-family: var(--mono); font-size: 11px; width: 16px; }
+.hotspots li .nm { flex: 1; }
+.hotspots li .ha { font-family: var(--mono); color: var(--text-muted); font-size: 12px; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+
+/* ---- buttons ---- */
+#basemap-toggle {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+#basemap-toggle:hover, #basemap-toggle:focus-visible { border-color: var(--accent); outline: none; }
+#basemap-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+/* ---- how-to ---- */
+#howto summary {
+  cursor: pointer; font-size: 13px; color: var(--text-muted);
+  list-style: none; padding: 4px 0;
+}
+#howto summary::-webkit-details-marker { display: none; }
+#howto summary::before { content: "＋ "; color: var(--accent); }
+#howto[open] summary::before { content: "－ "; }
+.howto-body p { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 8px 0 0; }
+
+.attrib { margin-top: auto; font-size: 11px; color: var(--text-muted); opacity: 0.75; line-height: 1.4; }
+
+/* ---- map ---- */
+#map-wrap { position: relative; flex: 1; height: 100%; }
+#map { position: absolute; inset: 0; background: #0d1013; }
+
+/* crossfade the imagery pane in/out */
+.leaflet-imagery-pane { transition: opacity .6s ease; }
+
+.leaflet-container { font-family: var(--sans); }
+.leaflet-popup-content-wrapper {
+  background: var(--ink); color: var(--text);
+  border-radius: 8px; border: 1px solid var(--line);
+}
+.leaflet-popup-tip { background: var(--ink); border: 1px solid var(--line); }
+.leaflet-popup-content { margin: 12px 14px; font-size: 13px; }
+.popup-title { font-weight: 500; font-size: 14px; margin-bottom: 6px; }
+.popup-row { display: flex; justify-content: space-between; gap: 18px; color: var(--text-muted); }
+.popup-row b { font-family: var(--mono); font-weight: 500; color: var(--text); }
+
+/* ---- legend ---- */
+.legend {
+  position: absolute; right: 12px; bottom: 22px; z-index: 500;
+  background: rgba(20,24,28,0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11px; color: var(--text);
+  backdrop-filter: blur(3px);
+}
+.legend .legend-title { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+.legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+.legend .row i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid rgba(255,255,255,0.15); }
+.legend .row span { font-family: var(--mono); color: var(--text-muted); }
+
+/* ---- responsive: stack on mobile ---- */
+@media (max-width: 720px) {
+  #app { flex-direction: column; }
+  #panel { width: 100%; flex: 0 0 auto; max-height: 46%; border-right: none; border-bottom: 1px solid var(--line); }
+  #map-wrap { flex: 1; }
+  #totals { grid-template-columns: 1fr 1fr 1fr; }
+}
+
+/* ---- accessibility ---- */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-imagery-pane { transition: none; }
+  * { scroll-behavior: auto; }
+}

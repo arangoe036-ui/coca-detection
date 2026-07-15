@@ -1,34 +1,62 @@
-<!DOCTYPE html>
-<!-- P5 map UI (plan §10). Placeholder scaffold — wired up in Phase 5.
-     Choropleth of municipal coca hectares over a high-res satellite basemap,
-     with a year slider. Data comes from ui/data/municipal_coca.geojson (P4). -->
-<html lang="es">
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coca Hotspots — Colombia</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    html, body, #map { height: 100%; margin: 0; }
-    #panel {
-      position: absolute; z-index: 1000; top: 12px; left: 12px;
-      background: rgba(255,255,255,.92); padding: 10px 14px; border-radius: 8px;
-      font: 14px system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3);
-    }
-    .note { font-size: 12px; color: #555; max-width: 260px; margin-top: 6px; }
-  </style>
+  <title>Colombia coca monitor — Catatumbo 2023</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-  <div id="panel">
-    <strong>Coca density by municipality</strong>
-    <div>Year: <input id="year" type="range" disabled /> <span id="yearLabel">—</span></div>
-    <div class="note">
-      Monitoring/analysis tool — aggregate density only, not a target list.
-      Basemap is a multi-date mosaic and may not match the analysis year.
+  <div id="app">
+    <aside id="panel" aria-label="Coca monitor controls">
+      <header>
+        <h1>Coca monitor</h1>
+        <p class="sub">
+          <span>Catatumbo, Norte de Santander</span>
+          <label class="year">Year
+            <select id="year" aria-label="Select year"></select>
+          </label>
+        </p>
+      </header>
+
+      <section id="totals" aria-label="Area totals"></section>
+
+      <section class="block">
+        <h2>Hotspots</h2>
+        <p class="hint">Ranked by predicted hectares. Select one to fly there.</p>
+        <ul id="hotspots" class="hotspots"></ul>
+      </section>
+
+      <section class="block">
+        <button id="basemap-toggle" type="button">Show imagery</button>
+        <p class="hint" id="inspect-hint">Zoom in past a municipality to auto-load high-resolution imagery.</p>
+      </section>
+
+      <details id="howto" class="block">
+        <summary>How to read this</summary>
+        <div class="howto-body">
+          <p>Totals and hotspot ranking are validated against Colombia's official ~1&nbsp;km grid, so <strong>totals and locations are reliable — individual plot boundaries are not</strong>. The imagery is for visual context; the model does not resolve single plots.</p>
+          <p>Satellite imagery is a multi-date mosaic and may not match 2023; remote areas may be lower resolution.</p>
+          <p>The model is calibrated on one region-year (Catatumbo, 2023).</p>
+        </div>
+      </details>
+
+      <footer class="attrib">
+        Density: model on free Sentinel-1/2. Official: Colombia ODC / datos.gov.co.
+      </footer>
+    </aside>
+
+    <div id="map-wrap">
+      <div id="map"></div>
+      <div id="legend" class="legend" aria-hidden="true"></div>
     </div>
   </div>
-  <div id="map"></div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
