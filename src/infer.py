@@ -29,22 +29,33 @@ from src.train import pick_device
 from src.utils import ensure_dirs, load_config
 
 
+def hann2d(n: int) -> np.ndarray:
+    """2D Hann window (near-zero at edges, 1 in the center) for feathered blending."""
+    w = np.hanning(n)
+    return np.outer(w, w).astype("float32") + 1e-6
+
+
 @torch.no_grad()
 def predict_raster(cfg: dict, image_path: str, model, mean, std, device) -> tuple:
-    """Sliding-window inference -> (prob[H,W] float32, profile). Overlaps averaged."""
+    """Sliding-window inference -> (prob[H,W] float32, profile).
+
+    v2 A1: overlaps are blended with a 2D Hann window (weight ~0 at tile edges,
+    1 at center) instead of hard-averaged, so tile seams/grid artifacts vanish.
+    """
     import rasterio
 
     win = cfg["infer"]["window_px"]
     ov = cfg["infer"]["window_overlap_px"]
-    step = win - ov
+    step = max(win - ov, 1)
     m = np.asarray(mean).reshape(-1, 1, 1)
     s = np.asarray(std).reshape(-1, 1, 1)
+    weight = hann2d(win)
 
     with rasterio.open(image_path) as ds:
         H, W = ds.height, ds.width
         profile = ds.profile
         acc = np.zeros((H, W), dtype="float32")
-        cnt = np.zeros((H, W), dtype="float32")
+        wsum = np.zeros((H, W), dtype="float32")
         model.eval()
         xs = list(range(0, max(W - win, 0) + 1, step)) + ([W - win] if W > win else [])
         ys = list(range(0, max(H - win, 0) + 1, step)) + ([H - win] if H > win else [])
@@ -54,16 +65,15 @@ def predict_raster(cfg: dict, image_path: str, model, mean, std, device) -> tupl
                 arr = ds.read(window=w).astype("float32")
                 arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
                 arr = (arr - m) / s
-                # pad to win if edge
                 ph, pw = win - arr.shape[1], win - arr.shape[2]
                 if ph or pw:
                     arr = np.pad(arr, ((0, 0), (0, ph), (0, pw)))
                 t = torch.from_numpy(arr[None]).to(device)
                 prob = torch.sigmoid(model(t))[0, 0].cpu().numpy()
-                prob = prob[: w.height, : w.width]
-                acc[y:y + w.height, x:x + w.width] += prob
-                cnt[y:y + w.height, x:x + w.width] += 1
-        prob = acc / np.maximum(cnt, 1e-6)
+                hh, ww = w.height, w.width
+                acc[y:y + hh, x:x + ww] += prob[:hh, :ww] * weight[:hh, :ww]
+                wsum[y:y + hh, x:x + ww] += weight[:hh, :ww]
+        prob = acc / np.maximum(wsum, 1e-6)
     return prob, profile
 
 
@@ -181,14 +191,69 @@ def municipal_hectares(cfg: dict, density: np.ndarray, profile):
                  "predicted_ha", "official_ha", "ratio", "geometry"]]
 
 
-def _infer_regression(cfg, prob, profile, out_dir) -> None:
-    """Density-regression outputs: calibrated hectares + municipal choropleth + footprint."""
+def gate_and_calibrate(cfg, density, fit_official_ha=None):
+    """v2 A2: gate the density to kill the background haze, then rescale by a
+    calibration constant k so the AOI total matches the official figure.
+
+    ``fit_official_ha`` given  -> FIT k = official / gated_total and save it.
+    ``fit_official_ha`` None   -> LOAD the saved k (reuse across years).
+    Returns (gated_density, stats).
+    """
+    import json
+
+    px_area_ha = (cfg["imagery"]["resolution_m"] ** 2) / 1e4
+    tau = cfg["infer"]["gate_threshold"]
+    calib_path = Path(cfg["paths"]["outputs_dir"]) / Path(cfg["infer"]["calibration_path"]).name
+
+    raw_total = float(density.sum()) * px_area_ha
+    raw_nonzero = float((density > 0).mean())
+    gated = density * (density >= tau)
+    gated_total = float(gated.sum()) * px_area_ha
+    gated_nonzero = float((gated > 0).mean())
+
+    if fit_official_ha is not None:
+        k = fit_official_ha / gated_total if gated_total > 0 else 1.0
+        calib_path.write_text(json.dumps(
+            {"gate_threshold": tau, "k": k, "fit_year": cfg["year"],
+             "fit_official_ha": fit_official_ha, "gated_total_prescale_ha": gated_total}, indent=2))
+        print(f"[infer] A2 FIT calibration k={k:.3f} (saved -> {calib_path.name})")
+    else:
+        if not calib_path.exists():
+            raise FileNotFoundError(f"No calibration at {calib_path}; run a fit year (2023) with --fit-calibration first.")
+        cal = json.loads(calib_path.read_text())
+        k = cal["k"]
+        print(f"[infer] A2 LOADED calibration k={k:.3f} (fit on {cal['fit_year']})")
+
+    gated *= k
+    final_total = float(gated.sum()) * px_area_ha
+    stats = {"raw_total_ha": raw_total, "raw_nonzero_frac": raw_nonzero,
+             "gated_nonzero_frac": gated_nonzero, "k": k, "final_total_ha": final_total}
+    print(f"[infer] A2 gate@{tau}: nonzero {100*raw_nonzero:.0f}% -> {100*gated_nonzero:.0f}%  "
+          f"total {raw_total:,.0f} -> {final_total:,.0f} ha (k={k:.2f})")
+    return gated, stats
+
+
+def _infer_regression(cfg, prob, profile, out_dir, fit_calibration=False) -> None:
+    """Density-regression outputs: gated + calibrated hectares + municipal choropleth + footprint."""
     import geopandas as gpd
     import rasterio.features
     from shapely.geometry import shape
 
     px_area_ha = (cfg["imagery"]["resolution_m"] ** 2) / 1e4
+
+    # v2 A2: gate haze + calibrate. Fit k on a year with official data; else reuse.
+    official = None
+    if fit_calibration:
+        official = float(fetch_coca_grid(cfg, tuple(cfg["aoi"]["bbox"]))["coca_ha"].sum())
+    prob, gate_stats = gate_and_calibrate(cfg, prob, fit_official_ha=official)
     predicted_ha = float(prob.sum()) * px_area_ha
+
+    # overwrite the density raster with the gated+calibrated version
+    dens_path = out_dir / f"{cfg['aoi']['region']}_{cfg['year']}_coca_density.tif"
+    pp = profile.copy(); pp.update(count=1, dtype="float32", compress="deflate")
+    import rasterio
+    with rasterio.open(dens_path, "w", **pp) as dst:
+        dst.write(prob.astype("float32"), 1)
 
     per_mpio = municipal_hectares(cfg, prob, profile)
     ui_dir = Path(cfg["paths"]["ui_data_dir"]); ui_dir.mkdir(parents=True, exist_ok=True)
@@ -214,7 +279,8 @@ def _infer_regression(cfg, prob, profile, out_dir) -> None:
         print(f"         {r['municipio']:<16} {r['predicted_ha']:>8,.0f} ha")
 
 
-def infer(cfg: dict, image_path: str, checkpoint: str, threshold: float | None = None) -> None:
+def infer(cfg: dict, image_path: str, checkpoint: str, threshold: float | None = None,
+          fit_calibration: bool = False) -> None:
     import rasterio
 
     ensure_dirs(cfg)
@@ -225,19 +291,19 @@ def infer(cfg: dict, image_path: str, checkpoint: str, threshold: float | None =
     thr = threshold if threshold is not None else cfg["eval"]["threshold"]
 
     prob, profile = predict_raster(cfg, image_path, model, ck["mean"], ck["std"], device)
-
     out_dir = Path(cfg["paths"]["outputs_dir"])
-    kind = "density" if cfg.get("model", {}).get("task") == "regression" else "prob"
-    prob_path = out_dir / f"{cfg['aoi']['region']}_{cfg['year']}_coca_{kind}.tif"
+
+    if cfg.get("model", {}).get("task") == "regression":
+        # _infer_regression writes the gated+calibrated density raster itself.
+        _infer_regression(cfg, prob, profile, out_dir, fit_calibration=fit_calibration)
+        return
+
+    prob_path = out_dir / f"{cfg['aoi']['region']}_{cfg['year']}_coca_prob.tif"
     pp = profile.copy()
     pp.update(count=1, dtype="float32", compress="deflate")
     with rasterio.open(prob_path, "w", **pp) as dst:
         dst.write(prob.astype("float32"), 1)
-    print(f"[infer] wrote {kind} raster -> {prob_path}")
-
-    if cfg.get("model", {}).get("task") == "regression":
-        _infer_regression(cfg, prob, profile, out_dir)
-        return
+    print(f"[infer] wrote prob raster -> {prob_path}")
 
     mask = postprocess(cfg, prob, thr)
     coca, per_mpio, _ = vectorize_and_join(cfg, mask, profile)
@@ -256,5 +322,9 @@ if __name__ == "__main__":
     ap.add_argument("--image", required=True)
     ap.add_argument("--checkpoint", default="outputs/checkpoints/best.pt")
     ap.add_argument("--threshold", type=float, default=None)
+    ap.add_argument("--fit-calibration", action="store_true",
+                    help="v2 A2: fit the density->hectares calibration k on this year's "
+                         "official figure and save it (do this on 2023; reuse for other years).")
     args = ap.parse_args()
-    infer(load_config(args.config), args.image, args.checkpoint, args.threshold)
+    infer(load_config(args.config), args.image, args.checkpoint, args.threshold,
+          fit_calibration=args.fit_calibration)

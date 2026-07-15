@@ -113,11 +113,16 @@ eval:
 # --- Inference & map outputs (plan §9) ---------------------------------------
 infer:
   window_px: 256
-  window_overlap_px: 32
+  window_overlap_px: 128     # v2 A1: 50% overlap for Hann-window feathered stitching (no seams)
   morph_kernel_px: 3         # open/close to remove specks
   min_polygon_ha: 0.25
   admin_boundaries: "GADM"   # "GADM" | "DANE_MGN"
   presence_fraction: 0.02    # regression: cover fraction above which a pixel is "present" (footprint polygons)
+  # v2 A2: gate the density to kill the background haze, then rescale so the AOI
+  # total still matches the official figure. Calibration k is FIT on a year with
+  # official data (2023) and REUSED for other years (2022/2024/2026).
+  gate_threshold: 0.05       # zero out predicted cover fraction below this
+  calibration_path: outputs/calibration.json
 
 # --- Map UI (plan §10) -------------------------------------------------------
 ui:
