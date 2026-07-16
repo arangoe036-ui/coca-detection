@@ -187,6 +187,9 @@ def municipal_hectares(cfg: dict, density: np.ndarray, profile):
     muni["ratio"] = muni["predicted_ha"] / muni["official_ha"]
     muni["name"] = muni["municipio"]
     muni["year"] = cfg["year"]
+    # GeoJSON must be WGS84 lon/lat — Leaflet treats coords as lat/lng and would
+    # otherwise place UTM-metre polygons near the north pole.
+    muni = muni.to_crs(4326)
     return muni[["gid", "name", "municipio", "departamento", "year",
                  "predicted_ha", "official_ha", "ratio", "geometry"]]
 

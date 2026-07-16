@@ -149,23 +149,29 @@ function popupHtml(p) {
 }
 
 async function loadChoropleth(year) {
-  const gj = await (await fetch(`data/municipal_coca_${year}.geojson`)).json();
-  if (layer) map.removeLayer(layer);
-  layersByName.clear();
-  layer = L.geoJSON(gj, {
-    style: (f) => ({ fillColor: colorFor(f.properties.predicted_ha), fillOpacity: 0.55, color: "#1b2127", weight: 1 }),
-    onEachFeature: (f, lyr) => {
-      const p = f.properties;
-      layersByName.set(p.name, lyr);
-      lyr.bindPopup(popupHtml(p));
-      lyr.on("mouseover", () => lyr.setStyle({ weight: 3, color: ACCENT }));
-      lyr.on("mouseout", () => layer.resetStyle(lyr));
-      lyr.on("click", () => flyToFeature(lyr.getBounds()));
-    },
-  }).addTo(map);
-  map.invalidateSize();
-  map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-  buildPanel(gj);
+  try {
+    const res = await fetch(`data/municipal_coca_${year}.geojson`);
+    if (!res.ok) throw new Error(`choropleth fetch ${res.status}`);
+    const gj = await res.json();
+    if (layer) map.removeLayer(layer);
+    layersByName.clear();
+    layer = L.geoJSON(gj, {
+      style: (f) => ({ fillColor: colorFor(f.properties.predicted_ha), fillOpacity: 0.55, color: "#1b2127", weight: 1 }),
+      onEachFeature: (f, lyr) => {
+        const p = f.properties;
+        layersByName.set(p.name, lyr);
+        lyr.bindPopup(popupHtml(p));
+        lyr.on("mouseover", () => lyr.setStyle({ weight: 3, color: ACCENT }));
+        lyr.on("mouseout", () => layer.resetStyle(lyr));
+        lyr.on("click", () => flyToFeature(lyr.getBounds()));
+      },
+    }).addTo(map);
+    map.invalidateSize();
+    if (layer.getBounds().isValid()) map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+    buildPanel(gj);
+  } catch (e) {
+    console.error("Choropleth failed to load:", e); // map stays on Catatumbo, not the ocean
+  }
 }
 
 function buildPanel(gj) {
