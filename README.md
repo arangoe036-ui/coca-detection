@@ -26,9 +26,18 @@ See [`coca-detection-build-plan.md`](../coca-detection-build-plan.md) for the fu
 - [x] **P2 — Baseline model.** U-Net (18-ch). Two tasks via `model.task`: **regression** (coca fraction → calibrated hectares, current default) and segmentation (binary presence). Trained on the real geographic split. *Remaining lever: geo-pretrained encoder weights.*
 - [x] **P3 — Evaluation.** Held-out test blocks: IoU 0.665, F1 0.799, P 0.757, R 0.845, AP 0.877 (thr 0.504 tuned on val).
 - [x] **P4 — Inference & outputs.** Density raster + municipal choropleth (GeoJSON/CSV) + footprint polygons + density-map PNG. **Calibrated area: predicted 46,843 ha vs official 39,815 ha (1.18×). Per-municipality: Tibú 0.98, El Tarra 0.95, Teorama 1.05 of official.** (Binary-presence baseline was 9.2× — density regression fixed the calibration.)
-- [x] **P5 — Map UI.** Leaflet console (`ui/`): municipal choropleth (YlOrBr) over CARTO light + Esri imagery crossfade, dark side panel (totals, ranked hotspots with fly-to, legend, caveats). Serve with `python -m http.server` from `ui/`.
-- [ ] **P5 — Map UI** (Leaflet/MapLibre choropleth + year slider + high-res basemap).
-- [ ] **P6 — Stretch** (temporal model / plot-level detection).
+- [x] **P5 — Map UI.** Leaflet console (`ui/`): municipal choropleth (YlOrBr) over CARTO light + Esri imagery crossfade, density COG overlay with opacity/threshold sliders, draw-a-box→hectares, dark side panel (totals, ranked hotspots with fly-to, legend, honest caveats). Serve with `python -m http.server` from `ui/`.
+
+### v2 (engine fixes + interactive map)
+- [x] **A — Feathered inference** (Hann-window blending; seams gone) + **presence gating & recalibration** (haze removed 100%→29%; calibrated 39,815 ha).
+- [x] **B — Interactive map** (COG density overlay, sliders, draw-to-sum, year selector + nowcast badge).
+- [x] **C — Generalization test** (2022 = 1.02 ✅, 2024 = 0.71 ❌ growth-year undercount → triggered v2.1).
+
+### v2.1 (multi-year retrain + LOYO) — final
+- [x] **Multi-year model** (2019–2024 pooled), **per-year normalization**, **frozen calibration**, **6-fold leave-one-year-out** validation. See [`docs/v2.1_loyo_results.md`](docs/v2.1_loyo_results.md).
+- **Verdict (accepted ceiling):** LOYO out-of-year ratios span **0.59–1.48 (mean 0.95, ±0.27)** — unbiased but wide. **Location & municipal ranking are reliable; within-year calibrated totals are reliable; absolute hectares for a censusless year carry a ~±40% band.** 2026 can only be an *exploratory* nowcast, never a validated figure.
+
+**Not pursued** (would need paid data or large compute for uncertain gain): Phase-5 temporal U-TAE, geo-pretrained encoder, plot-level detection (paid sub-meter imagery + hand labels, ~$15–60k).
 
 ## Setup
 
