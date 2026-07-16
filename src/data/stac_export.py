@@ -125,6 +125,10 @@ def build_s1_composite(catalog, cfg: dict, bbox, date_range):
 
     img = cfg["imagery"]
     items = _search(catalog, img["s1_collection"], bbox, date_range)
+    # Exclude Sentinel-1C granules: some 2025 S1C RTC assets on Planetary Computer are
+    # malformed (unreadable tiffs), and the 2019-2024 training data had no S1C anyway
+    # (it launched late 2024), so dropping it keeps inputs consistent with the model.
+    items = [it for it in items if not it.id.upper().startswith("S1C")]
     if not items:
         raise RuntimeError(f"No Sentinel-1 scenes for {date_range} over {bbox}.")
 

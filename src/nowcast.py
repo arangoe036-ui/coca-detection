@@ -119,7 +119,9 @@ def nowcast(cfg, year: int, reference: int):
     per.drop(columns="geometry").to_csv(ui_dir / f"municipal_coca_{year}.csv", index=False)
 
     lo, hi = est_ha * (1 - BAND), est_ha * (1 + BAND)
-    print(f"\n[nowcast] {year} (PARTIAL-YEAR, EXPLORATORY — no official census):")
+    import datetime
+    kind = "PARTIAL-YEAR" if year >= datetime.date.today().year else "FULL-YEAR"
+    print(f"\n[nowcast] {year} ({kind}, EXPLORATORY — no official census):")
     print(f"[nowcast]   estimated coca ≈ {est_ha:,.0f} ha  (±{int(BAND*100)}% band: {lo:,.0f}–{hi:,.0f} ha)")
     print(f"[nowcast]   *** not a validated figure; model under-reads growth years ***")
     top = per.sort_values("predicted_ha", ascending=False).head(6)
