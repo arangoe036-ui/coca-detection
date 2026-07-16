@@ -1,0 +1,46 @@
+{
+  "aoi": "catatumbo",
+  "model": "log-linear OLS on official AOI hectares",
+  "annual_growth_rate": 0.03915514935841169,
+  "official": [
+    {
+      "year": 2019,
+      "ha": 36295.5625
+    },
+    {
+      "year": 2020,
+      "ha": 35277.45703125
+    },
+    {
+      "year": 2021,
+      "ha": 38284.9921875
+    },
+    {
+      "year": 2022,
+      "ha": 37964.69140625
+    },
+    {
+      "year": 2023,
+      "ha": 39815.125
+    },
+    {
+      "year": 2024,
+      "ha": 44240.04296875
+    }
+  ],
+  "projection": [
+    {
+      "year": 2025,
+      "mean": 44087.809655539466,
+      "lo": 40662.17594806885,
+      "hi": 47802.039977041415
+    },
+    {
+      "year": 2026,
+      "mean": 45814.07442748731,
+      "lo": 41860.5524486073,
+      "hi": 50140.98698826843
+    }
+  ],
+  "framing": "SCENARIO, not a forecast: 'if the 2019-2024 trajectory holds'. Coca is policy/market-driven and has reversed before; intervals widen with extrapolation. Magnitude/trend = official census; location = model. Never fused."
+}
