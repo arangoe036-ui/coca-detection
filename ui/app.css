@@ -96,6 +96,22 @@ h2 {
 .stat b { font-family: var(--mono); font-weight: 500; font-size: 18px; color: var(--text); }
 .stat b .unit { font-size: 11px; color: var(--text-muted); margin-left: 3px; }
 
+/* ---- nowcast totals ---- */
+.stat.nowcast { border-color: var(--accent); }
+.stat .range { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.caveat {
+  grid-column: 1 / -1; font-size: 11px; line-height: 1.5; color: var(--text-muted);
+  background: rgba(230,160,31,0.08); border: 1px solid rgba(230,160,31,0.35);
+  border-radius: 8px; padding: 9px 11px; margin-top: 8px;
+}
+.caveat strong { color: var(--accent); }
+
+/* change-vs-reference arrows */
+.chg { font-family: var(--mono); font-weight: 500; margin-left: 2px; }
+.chg-up { color: #e6774d; }     /* more coca */
+.chg-down { color: #6fae7d; }   /* less coca */
+.chg-stable, .chg-new { color: var(--text-muted); }
+
 /* ---- hotspot list ---- */
 .hotspots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .hotspots li {

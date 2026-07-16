@@ -201,6 +201,28 @@ def run_loyo(cfg, years, epochs, patience):
     return results
 
 
+def train_final(cfg, years, epochs, patience):
+    """Train the FINAL deployment model on ALL years (train blocks), val on all
+    years' val blocks, calibration scalar fit on all years. Saves a checkpoint
+    (model + per-year norm stats + frozen scalar) for the 2026 nowcast."""
+    device = pick_device()
+    set_seed(cfg["project"]["seed"])
+    rows = read_index(cfg)
+    stats = year_norm_stats(cfg, rows)
+    tr = [r for r in rows if int(r["year"]) in years and r["split"] == "train"]
+    va = [r for r in rows if int(r["year"]) in years and r["split"] == "val"]
+    print(f"[final] train on ALL years {years}: {len(tr)} train / {len(va)} val tiles", flush=True)
+    model, vmae = train_fold(cfg, tr, va, stats, device, epochs, patience)
+    s = fit_scalar(cfg, model, tr, stats, device)
+    ckpt_dir = Path(cfg["paths"]["checkpoints_dir"]); ckpt_dir.mkdir(parents=True, exist_ok=True)
+    out = ckpt_dir / "final_multiyear.pt"
+    torch.save({"model": model.state_dict(),
+                "year_stats": {int(y): (m, st) for y, (m, st) in stats.items()},
+                "scalar": float(s), "tau": TAU, "years": years}, out)
+    print(f"[final] val_mae={vmae:.4f} scalar={s:.3f} -> saved {out}", flush=True)
+    return out
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Multi-year LOYO training/validation (v2.1).")
     ap.add_argument("--config", default=None)
@@ -208,9 +230,12 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=6)
     ap.add_argument("--smoke", action="store_true", help="quick 2-year, 2-epoch wiring test")
+    ap.add_argument("--final", action="store_true", help="train the final all-years deployment model")
     args = ap.parse_args()
     cfg = load_config(args.config)
     if args.smoke:
         run_loyo(cfg, [2023, 2024], epochs=2, patience=2)
+    elif args.final:
+        train_final(cfg, args.years, args.epochs, args.patience)
     else:
         run_loyo(cfg, args.years, args.epochs, args.patience)

@@ -5,7 +5,9 @@
    nowcast badge for years lacking an official census. */
 
 // Years available as data. `nowcast:true` => no official census; label it.
-const YEARS = [{ year: 2023, nowcast: false }];
+const YEARS = [{ year: 2023, nowcast: false }, { year: 2026, nowcast: true, partial: true }];
+const BAND = 0.40;          // LOYO out-of-year magnitude band (±40%) for nowcast years
+let currentMeta = {};
 const INSPECT_ZOOM = 13;
 const ACCENT = "#e6a01f";
 const RAMP = ["#ffffe5", "#fee391", "#fe9929", "#cc4c02", "#8c2d04"]; // YlOrBr light->dark
@@ -174,25 +176,47 @@ async function loadChoropleth(year) {
   }
 }
 
+const ARROW = { up: "↑", down: "↓", stable: "→", new: "＋" };
+
 function buildPanel(gj) {
   const feats = gj.features.map((f) => f.properties);
   const predTotal = feats.reduce((s, p) => s + (p.predicted_ha || 0), 0);
   const offTotal = feats.reduce((s, p) => s + (p.official_ha || 0), 0);
-  const ratioStr = offTotal ? (predTotal / offTotal).toFixed(2) + "×" : "nowcast";
-  document.getElementById("totals").innerHTML = `
-    <div class="stat"><span>Predicted</span><b>${fmt(predTotal)}<span class="unit">ha</span></b></div>
-    <div class="stat"><span>Official</span><b>${offTotal ? fmt(offTotal) : "—"}<span class="unit">ha</span></b></div>
-    <div class="stat wide"><span>Predicted / official ratio</span><b>${ratioStr}</b></div>`;
 
+  if (currentMeta.nowcast) {
+    // Never show a bare figure for a censusless year — a ±band range only.
+    const lo = fmt(predTotal * (1 - BAND)), hi = fmt(predTotal * (1 + BAND));
+    document.getElementById("totals").innerHTML = `
+      <div class="stat wide nowcast"><span>Estimated coca (unvalidated)</span>
+        <b>≈ ${fmt(predTotal)}<span class="unit">ha</span></b>
+        <div class="range">range ${lo}–${hi} ha · ±${Math.round(BAND * 100)}%</div></div>
+      <div class="caveat">No official census for ${currentMeta.year} (none until ~2028), and only
+        ~6 months of imagery (partial year, Jan–Jul). The total is a <strong>low estimate</strong>,
+        and year-over-year change is <strong>unreliable</strong> this cycle — apparent declines are
+        most likely coverage gaps, not real loss. Trust the <strong>map's location and ranking</strong>,
+        not the hectares or the arrows.</div>`;
+  } else {
+    const ratioStr = offTotal ? (predTotal / offTotal).toFixed(2) + "×" : "—";
+    document.getElementById("totals").innerHTML = `
+      <div class="stat"><span>Predicted</span><b>${fmt(predTotal)}<span class="unit">ha</span></b></div>
+      <div class="stat"><span>Official</span><b>${offTotal ? fmt(offTotal) : "—"}<span class="unit">ha</span></b></div>
+      <div class="stat wide"><span>Predicted / official ratio</span><b>${ratioStr}</b></div>`;
+  }
+
+  const refY = feats[0] && feats[0].ref_year;
   const top = [...feats].sort((a, b) => (b.predicted_ha || 0) - (a.predicted_ha || 0)).slice(0, 8);
   const ul = document.getElementById("hotspots");
-  ul.innerHTML = top.map((p, i) => `
-    <li tabindex="0" data-name="${p.name}">
+  ul.innerHTML = top.map((p, i) => {
+    const chg = currentMeta.nowcast && p.change_dir
+      ? `<span class="chg chg-${p.change_dir}" title="vs ${refY}">${ARROW[p.change_dir] || ""}</span>` : "";
+    const val = currentMeta.nowcast ? `≈${fmt(p.predicted_ha)} ha` : `${fmt(p.predicted_ha)} ha`;
+    return `<li tabindex="0" data-name="${p.name}">
       <span class="rank">${i + 1}</span>
       <span class="swatch" style="background:${colorFor(p.predicted_ha)}"></span>
-      <span class="nm">${p.name}</span>
-      <span class="ha">${fmt(p.predicted_ha)} ha</span>
-    </li>`).join("");
+      <span class="nm">${p.name}</span>${chg}
+      <span class="ha">${val}</span>
+    </li>`;
+  }).join("");
   const select = (name) => { const l = layersByName.get(name); if (l) { flyToFeature(l.getBounds()); l.openPopup(); } };
   ul.querySelectorAll("li").forEach((li) => {
     li.onclick = () => select(li.dataset.name);
@@ -213,8 +237,8 @@ function buildLegend() {
 
 // ---- year selector + nowcast badge -------------------------------------------
 async function loadYear(year) {
-  const meta = YEARS.find((y) => String(y.year) === String(year)) || {};
-  document.getElementById("nowcast-badge").hidden = !meta.nowcast;
+  currentMeta = YEARS.find((y) => String(y.year) === String(year)) || {};
+  document.getElementById("nowcast-badge").hidden = !currentMeta.nowcast;
   await loadChoropleth(year);
   await loadOverlay(year);
   makeDensityLayer();
@@ -222,11 +246,14 @@ async function loadYear(year) {
 }
 
 const yearSel = document.getElementById("year");
-yearSel.innerHTML = YEARS.map((y) => `<option value="${y.year}">${y.year}</option>`).join("");
+yearSel.innerHTML = YEARS.map((y) => `<option value="${y.year}">${y.year}${y.nowcast ? " (nowcast)" : ""}</option>`).join("");
 yearSel.onchange = (e) => loadYear(e.target.value);
 
 // ---- init --------------------------------------------------------------------
+const paramYear = new URLSearchParams(location.search).get("year");
+const initialYear = YEARS.some((y) => String(y.year) === paramYear) ? paramYear : String(YEARS[0].year);
+yearSel.value = initialYear;
 buildLegend();
-loadYear(YEARS[0].year);
+loadYear(initialYear);
 window.addEventListener("load", () => setTimeout(() => map.invalidateSize(), 120));
 window.addEventListener("resize", () => map.invalidateSize());
