@@ -106,11 +106,14 @@ h2 {
 }
 .caveat strong { color: var(--accent); }
 
-/* change-vs-reference arrows */
-.chg { font-family: var(--mono); font-weight: 500; margin-left: 2px; }
-.chg-up { color: #e6774d; }     /* more coca */
-.chg-down { color: #6fae7d; }   /* less coca */
-.chg-stable, .chg-new { color: var(--text-muted); }
+/* ---- trajectory chart ---- */
+.trend-chart svg { display: block; }
+.trend-chart .band { fill: rgba(230,160,31,0.15); stroke: none; }
+.trend-chart .line-off { fill: none; stroke: var(--accent); stroke-width: 2; }
+.trend-chart .line-proj { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; opacity: 0.8; }
+.trend-chart .dot { fill: var(--accent); }
+.trend-chart .ax { fill: var(--text-muted); font-family: var(--mono); font-size: 9px; }
+#trend-note em { color: var(--text); font-style: normal; }
 
 /* ---- hotspot list ---- */
 .hotspots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }

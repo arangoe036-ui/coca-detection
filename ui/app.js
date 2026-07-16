@@ -5,7 +5,8 @@
    nowcast badge for years lacking an official census. */
 
 // Years available as data. `nowcast:true` => no official census; label it.
-const YEARS = [{ year: 2023, nowcast: false }, { year: 2026, nowcast: true, partial: true }];
+// 2026 parked (partial-year artifact); 2025 is the full-year nowcast.
+const YEARS = [{ year: 2023, nowcast: false }, { year: 2025, nowcast: true }];
 const BAND = 0.40;          // LOYO out-of-year magnitude band (±40%) for nowcast years
 let currentMeta = {};
 const INSPECT_ZOOM = 13;
@@ -176,8 +177,6 @@ async function loadChoropleth(year) {
   }
 }
 
-const ARROW = { up: "↑", down: "↓", stable: "→", new: "＋" };
-
 function buildPanel(gj) {
   const feats = gj.features.map((f) => f.properties);
   const predTotal = feats.reduce((s, p) => s + (p.predicted_ha || 0), 0);
@@ -190,11 +189,11 @@ function buildPanel(gj) {
       <div class="stat wide nowcast"><span>Estimated coca (unvalidated)</span>
         <b>≈ ${fmt(predTotal)}<span class="unit">ha</span></b>
         <div class="range">range ${lo}–${hi} ha · ±${Math.round(BAND * 100)}%</div></div>
-      <div class="caveat">No official census for ${currentMeta.year} (none until ~2028), and only
-        ~6 months of imagery (partial year, Jan–Jul). The total is a <strong>low estimate</strong>,
-        and year-over-year change is <strong>unreliable</strong> this cycle — apparent declines are
-        most likely coverage gaps, not real loss. Trust the <strong>map's location and ranking</strong>,
-        not the hectares or the arrows.</div>`;
+      <div class="caveat">Full-year nowcast for ${currentMeta.year} — no official census yet (none until
+        ~2028). Two separate layers: <strong>location &amp; ranking come from the model</strong> (map,
+        trustworthy); <strong>magnitude &amp; trajectory come from the official census trend</strong>
+        (chart above, a scenario). This detected total is a ±${Math.round(BAND * 100)}% estimate — read the
+        range, not a point.</div>`;
   } else {
     const ratioStr = offTotal ? (predTotal / offTotal).toFixed(2) + "×" : "—";
     document.getElementById("totals").innerHTML = `
@@ -203,17 +202,16 @@ function buildPanel(gj) {
       <div class="stat wide"><span>Predicted / official ratio</span><b>${ratioStr}</b></div>`;
   }
 
-  const refY = feats[0] && feats[0].ref_year;
+  // No year-over-year arrows: model magnitude change is unreliable (LOYO). Trajectory
+  // lives in the official-trend chart. Hotspot list = location/ranking only.
   const top = [...feats].sort((a, b) => (b.predicted_ha || 0) - (a.predicted_ha || 0)).slice(0, 8);
   const ul = document.getElementById("hotspots");
   ul.innerHTML = top.map((p, i) => {
-    const chg = currentMeta.nowcast && p.change_dir
-      ? `<span class="chg chg-${p.change_dir}" title="vs ${refY}">${ARROW[p.change_dir] || ""}</span>` : "";
     const val = currentMeta.nowcast ? `≈${fmt(p.predicted_ha)} ha` : `${fmt(p.predicted_ha)} ha`;
     return `<li tabindex="0" data-name="${p.name}">
       <span class="rank">${i + 1}</span>
       <span class="swatch" style="background:${colorFor(p.predicted_ha)}"></span>
-      <span class="nm">${p.name}</span>${chg}
+      <span class="nm">${p.name}</span>
       <span class="ha">${val}</span>
     </li>`;
   }).join("");
@@ -222,6 +220,52 @@ function buildPanel(gj) {
     li.onclick = () => select(li.dataset.name);
     li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(li.dataset.name); } };
   });
+}
+
+// ---- official-census trajectory chart (magnitude layer) ----------------------
+async function loadTrend() {
+  let t;
+  try { t = await (await fetch("data/trend.json")).json(); }
+  catch (e) { console.warn("trend.json unavailable", e); return; }
+
+  const W = 300, H = 130, ml = 40, mr = 10, mt = 10, mb = 22;
+  const off = t.official, proj = t.projection;
+  const pts = off.map((d) => ({ x: d.year, y: d.ha }))
+    .concat(proj.map((d) => ({ x: d.year, y: d.mean })));
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y)
+    .concat(proj.map((d) => d.hi));
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymax = Math.max(...ys) * 1.05, ymin = 0;
+  const X = (x) => ml + (x - xmin) / (xmax - xmin) * (W - ml - mr);
+  const Y = (y) => mt + (1 - (y - ymin) / (ymax - ymin)) * (H - mt - mb);
+  const k = (v) => (v / 1000).toFixed(0) + "k";
+
+  const offLine = off.map((d, i) => `${i ? "L" : "M"}${X(d.year)},${Y(d.ha)}`).join(" ");
+  const last = off[off.length - 1];
+  const projLine = `M${X(last.year)},${Y(last.ha)} ` +
+    proj.map((d) => `L${X(d.year)},${Y(d.mean)}`).join(" ");
+  const bandTop = [{ x: last.year, y: last.ha }].concat(proj.map((d) => ({ x: d.year, y: d.hi })));
+  const bandBot = proj.slice().reverse().map((d) => ({ x: d.year, y: d.lo }))
+    .concat([{ x: last.year, y: last.ha }]);
+  const band = bandTop.concat(bandBot).map((p, i) => `${i ? "L" : "M"}${X(p.x)},${Y(p.y)}`).join(" ") + " Z";
+
+  const yticks = [0, ymax / 2, ymax].map((v) =>
+    `<text x="${ml - 5}" y="${Y(v) + 3}" text-anchor="end" class="ax">${k(v)}</text>`).join("");
+  const xticks = [xmin, 2024, xmax].map((x) =>
+    `<text x="${X(x)}" y="${H - 6}" text-anchor="middle" class="ax">${x}</text>`).join("");
+  const dots = off.map((d) => `<circle cx="${X(d.year)}" cy="${Y(d.ha)}" r="2.5" class="dot"/>`).join("");
+
+  document.getElementById("trend-chart").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Official coca hectares and scenario projection">
+      <path d="${band}" class="band"/>
+      <path d="${offLine}" class="line-off"/>
+      <path d="${projLine}" class="line-proj"/>
+      ${dots}${yticks}${xticks}
+    </svg>`;
+  const p26 = proj.find((d) => d.year === 2026) || proj[proj.length - 1];
+  document.getElementById("trend-note").innerHTML =
+    `Official 2019–2024 (solid) + scenario to ${p26.year} (dashed, shaded = 80%). ` +
+    `~${(t.annual_growth_rate * 100).toFixed(0)}%/yr <em>if the trajectory holds</em> — not a forecast.`;
 }
 
 // ---- legend ------------------------------------------------------------------
@@ -246,7 +290,7 @@ async function loadYear(year) {
 }
 
 const yearSel = document.getElementById("year");
-yearSel.innerHTML = YEARS.map((y) => `<option value="${y.year}">${y.year}${y.nowcast ? " (nowcast)" : ""}</option>`).join("");
+yearSel.innerHTML = YEARS.map((y) => `<option value="${y.year}">${y.year}${y.nowcast ? " (nowcast)" : " (validated)"}</option>`).join("");
 yearSel.onchange = (e) => loadYear(e.target.value);
 
 // ---- init --------------------------------------------------------------------
@@ -254,6 +298,7 @@ const paramYear = new URLSearchParams(location.search).get("year");
 const initialYear = YEARS.some((y) => String(y.year) === paramYear) ? paramYear : String(YEARS[0].year);
 yearSel.value = initialYear;
 buildLegend();
+loadTrend();
 loadYear(initialYear);
 window.addEventListener("load", () => setTimeout(() => map.invalidateSize(), 120));
 window.addEventListener("resize", () => map.invalidateSize());
