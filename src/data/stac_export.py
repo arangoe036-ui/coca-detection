@@ -28,6 +28,28 @@ from src.utils import ensure_dirs, load_config
 # Assets that live at native 20 m on Planetary Computer's Sentinel-2 L2A.
 _S2_20M = {"B05", "B06", "B07", "B8A", "B11", "B12"}
 
+# ESA Processing Baseline 04.00 (effective 2022-01-25) set BOA_ADD_OFFSET = -1000 for
+# L2A, so the correct DN->reflectance conversion is (DN - 1000)/10000. Scenes below
+# baseline 04.00 have no offset. (Phase 6.6.)
+_BOA_OFFSET_DN = -1000.0
+_BASELINE_04 = 4.0
+_BASELINE_04_DATE = "2022-01-25"
+
+
+def boa_offset_dn(item) -> float:
+    """DN offset to ADD before /10000 for one S2 item: -1000 if processing baseline
+    >= 04.00, else 0. Keyed on the `s2:processing_baseline` metadata field (a
+    reprocessed pre-2022 scene carries 04.00 and the offset); date only as fallback."""
+    props = getattr(item, "properties", {}) or {}
+    base = props.get("s2:processing_baseline")
+    try:
+        bnum = float(base)
+    except (TypeError, ValueError):
+        bnum = None
+    if bnum is not None:
+        return _BOA_OFFSET_DN if bnum >= _BASELINE_04 else 0.0
+    return _BOA_OFFSET_DN if str(props.get("datetime", "")) >= _BASELINE_04_DATE else 0.0
+
 
 def get_catalog(cfg: dict):
     """Open the PC STAC catalog with automatic asset signing."""
@@ -83,12 +105,21 @@ def build_s2_composite(catalog, cfg: dict, bbox, date_range):
     scl = ds["SCL"]
     bad = scl.isin(img["scl_mask_classes"])
     refl_bands = img["s2_bands"]
+    import pandas as pd
+    import xarray as xr
+
+    # Per-solar-day BOA additive offset (baseline 04.00 = -1000 DN), aligned to the
+    # loaded time axis and applied PER SCENE BEFORE /10000 and before indices (6.6a).
+    day_off = {str(pd.Timestamp(it.properties["datetime"]).date()): boa_offset_dn(it)
+               for it in items}
+    off = np.array([day_off.get(str(pd.Timestamp(t).date()), 0.0)
+                    for t in ds["time"].values], dtype="float32")
+    off_da = xr.DataArray(off, dims=["time"], coords={"time": ds["time"]})
     scaled = {}
     for b in refl_bands:
-        # L2A DN -> surface reflectance [0,1]; masked pixels become NaN.
-        da = ds[b].where(~bad).astype("float32") / 10000.0
+        # L2A (DN + offset) -> surface reflectance [0,1]; masked pixels become NaN.
+        da = (ds[b].where(~bad).astype("float32") + off_da) / 10000.0
         scaled[b] = da.median(dim="time", skipna=True)
-    import xarray as xr
 
     comp = xr.concat([scaled[b] for b in refl_bands], dim="band")
     comp = comp.assign_coords(band=refl_bands)

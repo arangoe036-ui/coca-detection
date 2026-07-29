@@ -166,6 +166,42 @@ stands. Phase 7's **spatial** justification is independent of this diagnostic (t
 
 ---
 
+## Amendment — Phase 6.6 (2026-07-29, logged BEFORE the LOYO re-run)
+
+**A9 — Differential prediction for the S2-offset fix (registered before recompute).**
+Phase 6.6 corrects the baseline-04.00 offset (+0.1 reflectance in 2022–2024),
+recomputing indices from corrected reflectance. The sharp, falsifiable test is
+**differential**, not "did the spread drop":
+
+- **Prediction:** re-running LOYO on corrected data should **improve the 2022–2024
+  folds specifically** (their `|aoi_ratio − 1|` decreases) and **leave 2019–2021
+  roughly unchanged**. Formally: mean `|Δ ratio|` over {2022,2023,2024} ≫ mean
+  `|Δ ratio|` over {2019,2020,2021}, and ≥2 of the 3 offset folds move toward 1.0.
+- **Comparison baseline:** the published v2.1 per-fold ratios (0.95 / 0.59 / 0.90 /
+  1.48 / 1.01 / 0.79). Caveat: v2.1 was produced in a possibly different
+  environment, and MPS training is not bit-deterministic, so small clean-year moves
+  may be run noise rather than the fix; a matched in-environment uncorrected control
+  would net this out and can follow if attribution is unclear.
+- **Coupling note:** every fold *trains* on 2022–2024, but per-year z-scoring makes
+  the raw-band correction invisible after normalization (a constant shift is removed
+  either way); only the six **index** channels change. So clean-year folds may move
+  a little via changed 2022–2024 training indices, but should move less than the
+  offset folds whose **test** indices are corrected.
+- **Outcomes:** (i) offset folds improve, clean roughly unchanged, spread drops → the
+  offset was a real magnitude cause; report how much of 0.271 it removes. (ii) offset
+  folds do **not** improve → the offset was a genuine correctness bug but **not** the
+  magnitude driver; report that plainly (a fixed bug that didn't move the metric is
+  still a result). (iii) clean folds move as much as offset folds → confound or a
+  second problem; investigate before claiming the fix worked.
+- **Known residual (do not obscure):** 2020 is a clean pre-offset year and misses by
+  −0.41; the offset cannot explain it. It should stay mostly bad; per-year
+  normalization remains the leading suspect for that fold specifically.
+
+No published result is overwritten; v2.1 and `BASELINE_LADDER_RESULTS.md` stand and
+are annotated (6.6d), and the corrected re-run is published beside them.
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —
