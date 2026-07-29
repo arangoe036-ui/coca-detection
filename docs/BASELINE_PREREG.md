@@ -66,6 +66,60 @@ longer rests on a margin smaller than the noise.
 
 ---
 
+## Amendments — Phase 5/6 (2026-07-29, logged BEFORE recomputing anything)
+
+Logged during the Phase 5/6 build, each **before** the number it governs is
+recomputed (hard rule: pre-register thresholds and new questions as dated
+amendments). The Phase 3 `aoi_ratio` verdict (§4, Track B) stays published exactly
+as it came out — these amendments *add* analyses and fix presentation, they never
+overwrite it.
+
+**A4 — Track A spatial metrics are CELL-LEVEL, not field-level (scope, not a rule
+change).** `src/data/labels.py:107-115` burns one constant density
+`coca_ha / cell_ha` into *every* 20 m pixel of each ~1 km official cell (uniform
+by construction). Therefore Track A's presence-IoU/F1 measure agreement with which
+**1 km cells** contain coca, not field-level localization — and nothing in this
+repo can validate sub-cell placement against 1 km labels. Every spatial claim is
+scoped to cell level hereafter. The 2,065-polygon 20 m artifact
+(`outputs/catatumbo_2023_coca.geojson`) implicitly overclaims and stays unpublished.
+This reframes, not retracts, the Track A win. Phase 7 replaces this supervision.
+
+**A5 — Unified calibration convention for Track A (pre-registered before
+recompute).** In Track A, predictions are compared on the **density-fraction
+scale**. Trained regressors (U-Net, RF) already output fractions; the NDVI index
+ramp does not, which is why its raw Track A MAE was 0.5458 (a scale artifact, not a
+finding). Fix: map every method's prediction to the density scale by a single
+train-years-only constant `a = Σ(train target) / Σ(train prediction)` (ungated,
+computed on a fixed-seed train sample), then compute MAE/RMSE/bias and presence-
+IoU/F1 (thr 0.02) on `a · prediction`. This is the same linear-calibration idea as
+Track B's `fit_scalar`, applied to each track's own target scale (density for A,
+hectares for B). `a` is recorded per method per run; before/after is reported. For
+U-Net/RF `a ≈ 1` (already fraction-scale); for NDVI `a ≈ 0.08`.
+
+**A6 — IoU reconciliation (5.1).** README's `IoU 0.665 / AP 0.877 (thr 0.504 tuned
+on val)` is a **stale P0–P4-era figure**: it is the original single-year-2023
+segmentation-style evaluation (`best.pt`; AP + a val-tuned threshold are produced
+only by `_evaluate_segmentation`). The shipped pipeline is multiyear density
+regression (`final_multiyear.pt`); its authoritative **cell-level** presence-IoU is
+the Track A number (thr 0.02, per-year mean on held-out test blocks). The README is
+corrected to carry one authoritative, clearly-scoped figure; the 0.665 is marked
+superseded, not presented as the current headline.
+
+**A7 — Phase 6 coverage hypothesis (new question, pre-registered before 6.1).**
+Question: *are the two out-of-band U-Net folds (2020, 2022 — plus a check on 2024)
+the degraded-imagery years rather than a model failure?* 6.1 is a **descriptive**
+diagnostic at n=6 (no p-values, no regression significance): per year, number of
+scenes and mean/median clear **S2** observations per pixel, and **S1** pass count,
+measured **separately** (not conflated). Pre-registered readings: (i) 2020 & 2022
+clearly lowest coverage → hypothesis supported; (ii) coverage unrelated to
+|ratio−1| → hypothesis rejected (a real finding: the misses are a model problem);
+(iii) partial → gate only the supported mechanism. Any coverage **threshold** for a
+6.2 gate is a separate amendment, chosen from the coverage distribution **alone**
+(input-side only, never from labels/ratios/errors) and logged before any ratio is
+recomputed.
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —
