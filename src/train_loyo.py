@@ -173,13 +173,21 @@ def test_year_ratio(cfg, model, test_year, scalar, stats, device):
     return pred_ha, official, pred_ha / official if official else float("nan")
 
 
-def run_loyo(cfg, years, epochs, patience):
+def run_loyo(cfg, years, epochs, patience, holdout=None):
+    """`holdout` (default: all `years`) restricts WHICH held-out folds to run; each
+    fold still trains on all OTHER years in `years` (identical fold logic). This lets
+    an interrupted run resume specific folds. Each fold is appended to
+    outputs/metrics/loyo_corrected.jsonl as it completes, so a kill loses nothing."""
+    import json
+    from pathlib import Path
     device = pick_device()
     set_seed(cfg["project"]["seed"])
     rows = read_index(cfg)
     stats = year_norm_stats(cfg, rows)  # per-year stats over all tiles (inputs only)
+    holdout = holdout or years
+    out = Path(cfg["paths"]["outputs_dir"]) / "metrics"; out.mkdir(parents=True, exist_ok=True)
     results = []
-    for test_year in years:
+    for test_year in holdout:
         train_years = [y for y in years if y != test_year]
         tr = [r for r in rows if int(r["year"]) in train_years and r["split"] == "train"]
         va = [r for r in rows if int(r["year"]) in train_years and r["split"] == "val"]
@@ -191,6 +199,9 @@ def run_loyo(cfg, years, epochs, patience):
         print(f"[loyo] {test_year}: val_mae={vmae:.4f} scalar={s:.3f} "
               f"pred={pred_ha:,.0f} official={off_ha:,.0f} ratio={ratio:.2f}", flush=True)
         results.append((test_year, ratio, pred_ha, off_ha, s))
+        with open(out / "loyo_corrected.jsonl", "a") as fh:
+            fh.write(json.dumps({"year": test_year, "ratio": ratio, "pred_ha": pred_ha,
+                                 "official_ha": off_ha, "scalar": s, "val_mae": vmae}) + "\n")
 
     ratios = [r for _, r, *_ in results]
     print("\n[loyo] ===== LOYO out-of-year ratio table =====")
@@ -227,6 +238,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Multi-year LOYO training/validation (v2.1).")
     ap.add_argument("--config", default=None)
     ap.add_argument("--years", type=int, nargs="+", default=[2019, 2020, 2021, 2022, 2023, 2024])
+    ap.add_argument("--holdout", type=int, nargs="+", default=None,
+                    help="subset of held-out folds to run (default: all --years); "
+                         "each still trains on the other --years. For resuming.")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=6)
     ap.add_argument("--smoke", action="store_true", help="quick 2-year, 2-epoch wiring test")
@@ -238,4 +252,4 @@ if __name__ == "__main__":
     elif args.final:
         train_final(cfg, args.years, args.epochs, args.patience)
     else:
-        run_loyo(cfg, args.years, args.epochs, args.patience)
+        run_loyo(cfg, args.years, args.epochs, args.patience, holdout=args.holdout)
