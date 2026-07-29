@@ -105,5 +105,18 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Evaluate coca model (P3).")
     ap.add_argument("--config", default=None)
     ap.add_argument("--checkpoint", default="outputs/checkpoints/best.pt")
+    ap.add_argument("--emit-metrics", action="store_true",
+                    help="P6-A: also persist the metrics dict to "
+                         "outputs/metrics/metrics.json (retire prose-only numbers).")
     args = ap.parse_args()
-    evaluate(load_config(args.config), args.checkpoint)
+    cfg = load_config(args.config)
+    m = evaluate(cfg, args.checkpoint)
+    if args.emit_metrics:
+        import json
+        from pathlib import Path
+        out = Path(cfg["paths"]["outputs_dir"]) / "metrics"
+        out.mkdir(parents=True, exist_ok=True)
+        rec = {"checkpoint": args.checkpoint, "task": cfg.get("model", {}).get("task"),
+               "metrics": {k: float(v) for k, v in m.items()}}
+        (out / "metrics.json").write_text(json.dumps(rec, indent=2))
+        print(f"[eval] wrote outputs/metrics/metrics.json")
