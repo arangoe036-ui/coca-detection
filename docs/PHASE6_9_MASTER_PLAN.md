@@ -54,6 +54,53 @@ ablation ladder below, where it is measured properly as one increment.
 
 ---
 
+## Phase 6.5 — Diagnose the magnitude mechanism (~4–6h, mostly no GPU) — NEW
+
+**Why this exists:** Phase 6.1 rejected coverage. The lesson is not just "coverage is
+innocent" — it is *do not build on an unverified mechanism*. "Uniform labels cause the
+counting failure" is also currently a hunch. Diagnose before intervening again.
+
+**Leading suspect — per-year normalization.** `train_loyo.py:180` computes
+`year_norm_stats` over **all** tiles including the test year, and line 165 normalizes
+the held-out year with **its own** mean/std. Per-year z-scoring removes each year's
+absolute level, so the model cannot perceive "this year is more disturbed overall than
+usual" — that signal is subtracted out before it sees anything.
+
+This predicts exactly the observed split: within-year relative patterns survive
+(localization works, IoU 0.474, 6/6) while cross-year absolute levels are destroyed
+(counting fails), errors are uncorrelated with coverage, the sign is inconsistent, and
+model variance (0.271) exceeds the target's own variance (official CV 0.075).
+
+Tests, cheapest first:
+
+- **6.5a (~1h, no GPU).** Correlate the per-year normalization parameters (mean/std for
+  key channels: NBR, B12, B11, NDVI) against per-year `|ratio − 1|` and against signed
+  error. If 2020's means sit above the pooled mean in a direction consistent with
+  under-prediction, and 2022's below, the mechanism is confirmed with no inference runs.
+- **6.5b (~2h, inference only).** Swap-stats sensitivity: re-run `test_year_ratio` with
+  **train-pooled** stats instead of test-year stats. Report the change in predicted
+  total per fold. Note this is a train/test normalization mismatch — it measures
+  *sensitivity*, not a fix. Large movement ⇒ normalization is the dominant lever.
+- **6.5c (~2h).** Decompose the 2020 and 2022 errors by municipality/block. Concentrated
+  ⇒ a specific confusion (investigate what changed in those cells). Diffuse ⇒ a global
+  level shift, consistent with normalization.
+- **6.5d (~1h).** Sweep the presence gate inside `fit_scalar`. If `aoi_ratio` is
+  hypersensitive to the gate threshold, the gate is the amplifier converting small
+  density shifts into ~40% total swings.
+
+**Pre-register the outcomes before running**, as with 6.1:
+- Normalization implicated ⇒ add a **normalization rung** to the Phase 9 ladder
+  (retrain with pooled/global stats, or keep per-year stats and feed the year's absolute
+  level back as auxiliary scalar inputs). Cheaper than the sensor build.
+- Gate implicated ⇒ fix the gate; report how much of the original 0.271 it explained.
+- Neither implicated ⇒ supervision (Phase 7) becomes the leading suspect on elimination
+  rather than assumption.
+
+**Acceptance:** committed `docs/magnitude_diagnostic.md` with all four tests, the
+pre-registered outcome that fired, and an explicit statement of what remains unexplained.
+
+---
+
 ## Phase 7 — Fix the supervision (~12–16h)
 
 ### 7.1 Aggregate-consistent loss
@@ -117,20 +164,28 @@ Add per-pixel **valid-observation count** as an input channel, separately for op
 and SAR. The model currently cannot distinguish *"no coca here"* from *"I could not see
 this pixel"* — this is the minimal fix and it also feeds Phase 6.2's gate.
 
-### 8.3 HLS (Harmonized Landsat–Sentinel-2, 30 m)
+### 8.3 HLS — RATIONALE DEAD AFTER PHASE 6.1. DROP.
 
-Merges Landsat 8/9 with Sentinel-2 into one calibrated surface-reflectance product,
-substantially increasing clear looks — which is exactly what 2020 lacked. Available via
-the Planetary Computer STAC you already use, so `stac_export.py` extends rather than
-gets rewritten. Verify year coverage for 2019–2024 before committing to it.
+HLS was justified by the premise that 2020 lacked clear looks. Phase 6.1 measured
+**32.7 clear observations/pixel in 2020 — the best of all six years** — while 2020 is
+the second-worst fold. Optical coverage across all years is 25.5–32.7 clear looks/pixel,
+which is ample. Adding more optical looks addresses a bottleneck that does not exist.
+**Do not build this.** Record the reason so the decision is auditable.
 
-### 8.4 ALOS/PALSAR annual mosaics (25 m, L-band SAR)
+### 8.4 ALOS/PALSAR annual mosaics (25 m, L-band SAR) — rationale SURVIVES, but screen first
 
-JAXA's free global annual mosaics. Complementary for two reasons: SAR is cloud-immune,
-and **L-band interacts with vegetation structure differently than Sentinel-1's C-band**,
-so it is genuinely additional information rather than redundancy. Directly patches the
-2022/2024 S1 gap. Well-motivated given the RF found the SWIR/disturbance complex
-dominant. Verify 2019–2024 availability.
+JAXA's free global annual mosaics. **The coverage argument for this is also dead** —
+Phase 6.1 showed S1 passes only dropped ~15% post-S1B, not ~50%, and 2023 succeeded on
+the same SAR coverage that 2022 failed on. What survives is an **information** argument,
+which is different and stronger: L-band reads vegetation *structure*, not greenness, so
+it is new physics rather than more looks. Given the RF found the SWIR/disturbance complex
+dominant (NBR/B12/B11) with NDVI ranking 15/18, a structure-sensitive sensor is
+well-motivated on signal grounds.
+
+**Screen before building.** Add PALSAR for a single fold and check whether the L-band
+channels rank meaningfully in an RF feature importance against the existing 18. One day
+of work to decide on twenty. Proceed to the full build only if they do. Verify 2019–2024
+availability first.
 
 ### 8.5 Optional — high-resolution imagery for validation only
 

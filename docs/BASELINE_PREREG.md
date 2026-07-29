@@ -120,6 +120,52 @@ recomputed.
 
 ---
 
+## Amendment — Phase 6.5 (2026-07-29, logged BEFORE computing the diagnostic)
+
+**A8 — Magnitude-mechanism diagnostic (new question, pre-registered before any
+number).** Phase 6.1 ruled out coverage as the cause of the out-of-year magnitude
+failure (U-Net `aoi_ratio` std 0.271 ≫ official CV 0.075). Before intervening again
+we diagnose the mechanism rather than assume it. Leading suspect: per-year
+z-scoring (`src/train_loyo.py:165` normalizes the held-out year by its own
+mean/std; `:180` computes per-year stats), which erases each year's **absolute
+level**, so the model cannot perceive "this year is more disturbed overall than
+usual." This would predict the exact observed split (localization works, counting
+fails, errors uncorrelated with coverage, inconsistent sign, variance > target CV).
+
+Tests (all n=6, descriptive — no p-values):
+- **6.5a** correlate per-year normalization parameters (mean/std of the disturbance
+  channels NBR/B12/B11 and NDVI) against per-year signed error and `|ratio−1|`; and
+  check whether U-Net `predicted_ha` tracks `official_ha` at all (if the level
+  signal is destroyed, it should not).
+- **6.5b** swap-stats sensitivity: predict each year under its **own** stats vs
+  **pooled** (all-year) stats and report the change in summed gated U-Net density.
+  Uses `final_multiyear.pt` (per-fold LOYO models were not saved), so it measures
+  *sensitivity*, not a fix; documented as such.
+- **6.5c** decompose the 2020 & 2022 discrepancy by spatial block: concentrated ⇒ a
+  specific confusion; diffuse ⇒ a global level shift consistent with normalization.
+- **6.5d** sweep the `fit_scalar` presence gate `TAU`: if the total is hypersensitive
+  to it, the gate is an amplifier converting small density shifts into large total
+  swings.
+
+Pre-registered outcomes (more than one may fire; report each test's contribution
+and state what remains unexplained):
+- **Normalization implicated** (6.5a correlation and/or `pred_ha` not tracking
+  `official_ha` and/or 6.5b large swap-stats movement) ⇒ add a **normalization rung**
+  to the Phase 9 ladder (retrain with pooled/global stats, or keep per-year stats and
+  feed the year's absolute level back as auxiliary scalar inputs) — cheaper than the
+  sensor build.
+- **Gate implicated** (6.5d hypersensitivity) ⇒ fix the gate; report how much of the
+  0.271 it explains.
+- **Neither** ⇒ supervision (Phase 7) becomes the leading magnitude suspect **by
+  elimination**, not assumption.
+
+No already-published result is overwritten; the frozen Track B `aoi_ratio` verdict
+stands. Phase 7's **spatial** justification is independent of this diagnostic (the
+~1 km uniform labels cap validation at cell level regardless, A4); only Phase 7's
+**magnitude** rationale competes with the normalization hypothesis.
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —
