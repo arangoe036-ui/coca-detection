@@ -83,18 +83,20 @@ def track_b_table(runs) -> list[str]:
             cells.append("—" if v is None else f"{abs(v-1)-du[y]:+.3f}")
         L.append(f"| {y} | " + " | ".join(cells) + " |")
     verdict = []
+    TIE = 1e-3   # 5.4: |δ| below this is a numerical tie, not a win (e.g. 2020 RF)
     for m in B_METHODS:
         if m == "unet":
             continue
         deltas = [abs(ratios[m][y]-1)-du[y] for y in YEARS if ratios[m].get(y) is not None]
         if not deltas:
             continue
-        unet_better = sum(x > 0 for x in deltas)
-        x_better = sum(x < 0 for x in deltas)
-        call = ("U-Net clearly better (≥5/6)" if unet_better >= 5 else
-                f"{LABEL[m]} clearly better (≥5/6)" if x_better >= 5 else
+        w = sum(x > TIE for x in deltas)      # U-Net wins
+        t = sum(abs(x) <= TIE for x in deltas)  # ties
+        loss = sum(x < -TIE for x in deltas)  # U-Net losses
+        call = ("U-Net clearly better (≥5/6 wins)" if w >= 5 else
+                f"{LABEL[m]} clearly better (≥5/6 wins)" if loss >= 5 else
                 "indistinguishable at n=6")
-        verdict.append(f"- **U-Net vs {LABEL[m]}:** U-Net closer in {unet_better}/6, "
+        verdict.append(f"- **U-Net vs {LABEL[m]}:** {w}W / {t}T / {loss}L, "
                        f"mean δ = {np.mean(deltas):+.3f} → **{call}**")
     L += ["", "**Paired verdicts (prereg §5, ≥5/6 rule):**", *verdict]
     return L

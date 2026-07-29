@@ -26,6 +26,29 @@ from src.train import pick_device
 from src.utils import load_config
 
 CKPT = "outputs/checkpoints/final_multiyear.pt"
+CALIB_SEED = 7
+CALIB_N = 1_000_000
+
+
+def _calib_pixels(cfg, rows, stats, predict_pixels, normalize_inputs):
+    """A5: density-scale calibration a = Σ(train target)/Σ(train pred), ungated,
+    on a fixed-seed train pixel sample."""
+    X, y, *_ = C.sample_train_pixels(cfg, rows, stats, CALIB_N, CALIB_SEED,
+                                     normalize_inputs=normalize_inputs)
+    den = float(np.sum(predict_pixels(X)))
+    return float(np.sum(y)) / den if den > 0 else 1.0
+
+
+def _calib_tiles(cfg, rows, stats, predict_tile, n=200):
+    rng = np.random.default_rng(CALIB_SEED)
+    sel = rng.choice(len(rows), min(n, len(rows)), replace=False)
+    num = den = 0.0
+    for i in sel:
+        img, mask = C._tile(cfg, rows[i])
+        m, s = stats[int(rows[i]["year"])]
+        p = predict_tile(C._norm(img, m, s))
+        num += float(mask.sum()); den += float(np.asarray(p).sum())
+    return num / den if den > 0 else 1.0
 
 
 def _unet_predictor(cfg, device):
@@ -44,16 +67,18 @@ def _unet_predictor(cfg, device):
     return predict_tile, stats
 
 
-def _per_year_write(cfg, method, years, collect_fn, n_train):
-    """collect_fn(test_rows) -> (probs, targets) for a set of test tiles."""
+def _per_year_write(cfg, method, years, collect_fn, n_train, a):
+    """collect_fn(test_rows) -> (probs, targets) for a set of test tiles. Predictions
+    are calibrated to the density scale by `a` (A5) before metrics."""
     rows = C.load_index(cfg)
     for y in years:
         te = C.rows_for(rows, [y], "test")
         probs, tgts = collect_fn(te)
-        m = C.regression_metrics(cfg, probs, tgts)
+        m = C.regression_metrics(cfg, np.asarray(probs) * a, tgts)
         write_run(cfg, method, y, m, track="A", n_train_tiles=n_train,
-                  n_test_tiles=len(te), calibration_scalar=None, fit_years=years)
-        print(f"  [{method}] {y}: MAE={m['mae']:.4f} IoU={m['presence_iou']:.3f} "
+                  n_test_tiles=len(te), calibration_scalar=None, fit_years=years,
+                  extra={"track_a_density_calib_a": a, "calib_convention": "A5"})
+        print(f"  [{method}] {y}: a={a:.3f} MAE={m['mae']:.4f} IoU={m['presence_iou']:.3f} "
               f"F1={m['presence_f1']:.3f}")
 
 
@@ -69,26 +94,29 @@ def run(cfg, years=None):
     # --- U-Net (existing checkpoint) ---
     print("[track-a] U-Net (final_multiyear.pt)")
     predict_tile, ck_stats = _unet_predictor(cfg, device)
+    a_u = _calib_tiles(cfg, tr, ck_stats, predict_tile)
     _per_year_write(cfg, "unet", years,
                     lambda te: C.collect_tiles(cfg, te, ck_stats, predict_tile),
-                    n_train=len(tr))
+                    n_train=len(tr), a=a_u)
 
-    # --- NDVI threshold (raw NDVI) ---
-    print("[track-a] NDVI threshold")
+    # --- NDVI ramp (raw NDVI) ---
+    print("[track-a] NDVI ramp")
     ndvi, info = NDVIThreshold.fit(cfg, tr, va)
     print(f"          selected t={info['selected_t']:.2f} (val F1={info['val_f1_at_t']:.3f})")
+    a_n = _calib_pixels(cfg, tr, stats, ndvi.predict_pixels, normalize_inputs=False)
     _per_year_write(cfg, "ndvi_threshold", years,
                     lambda te: C.collect_pixels(cfg, te, stats, ndvi.predict_pixels,
                                                 normalize_inputs=False),
-                    n_train=len(tr))
+                    n_train=len(tr), a=a_n)
 
     # --- Random forest (normalized 18ch) ---
     print("[track-a] random forest")
     rf, rinfo = PixelRF.fit(cfg, tr, stats, seed=SEED)
+    a_r = _calib_pixels(cfg, tr, stats, rf.predict_pixels, normalize_inputs=True)
     _per_year_write(cfg, "random_forest", years,
                     lambda te: C.collect_pixels(cfg, te, stats, rf.predict_pixels,
                                                 normalize_inputs=True),
-                    n_train=len(tr))
+                    n_train=len(tr), a=a_r)
 
 
 if __name__ == "__main__":
