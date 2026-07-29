@@ -76,7 +76,7 @@ def run(cfg, years=None):
     # --- NDVI threshold (raw NDVI) ---
     print("[track-a] NDVI threshold")
     ndvi, info = NDVIThreshold.fit(cfg, tr, va)
-    print(f"          selected t={info['selected_t']:.2f} c={info['fitted_c']:.4f}")
+    print(f"          selected t={info['selected_t']:.2f} (val F1={info['val_f1_at_t']:.3f})")
     _per_year_write(cfg, "ndvi_threshold", years,
                     lambda te: C.collect_pixels(cfg, te, stats, ndvi.predict_pixels,
                                                 normalize_inputs=False),

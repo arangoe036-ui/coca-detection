@@ -139,8 +139,17 @@ def track_a_table(runs) -> list[str]:
     return L
 
 
+def _dedup_last(runs):
+    """Keep the LAST record per (method, track, fold_year) so a re-run supersedes a
+    stale row without rewriting the append-only JSONL."""
+    keep = {}
+    for r in runs:
+        keep[(r["method"], r["track"], r["fold_year"])] = r
+    return list(keep.values())
+
+
 def main(cfg):
-    runs = read_runs(cfg)
+    runs = _dedup_last(read_runs(cfg))
     if not runs:
         raise SystemExit("no runs in baseline_ladder.jsonl")
     lines = ["# Baseline ladder — comparison tables",
