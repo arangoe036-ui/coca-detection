@@ -237,6 +237,34 @@ settled (2023 already completed opportunistically: 1.33).
 
 ---
 
+## Amendment — Phase 6.6 quantile gate (2026-07-29, logged BEFORE the test)
+
+**A11 — Scale-invariant quantile gate (registered before computing).** The fixed
+`TAU=0.05` gate cuts a different mass fraction each year because the per-year-
+normalized model output shifts year to year (A10). Replacement gate: keep, in every
+year, the **top `f_keep` fraction of pixels by predicted density**, where `f_keep` is
+fit on **train years only** = the mean per-train-year fraction of pixels with
+predicted density ≥ 0.05 (the current gate's average train keep-rate). The threshold
+is then the `(1 − f_keep)` quantile of *each year's own* prediction distribution, so
+the same fraction is gated every year — scale-invariant, input/output-side, no
+label/test leakage. The calibration scalar is refit on the quantile-gated train
+predictions.
+
+**Test:** apply it post-hoc to the saved corrected 2022 fold (model
+`loyo_fold`/`loyo_2022_corrected.pt` + cached test density) and recompute `aoi_ratio`.
+Decision (same thresholds as A10): 2022 ratio **≥ 0.75** ⇒ the collapse was the gate
+→ normalization reverts to a Phase 9 design-choice ablation; **< 0.40** ⇒ the model's
+raw output collapsed and no gate fixes it → retrain once with the normalization fix
+(**A8 option 2 preferred: per-year stats + absolute-level auxiliary inputs**, which
+restores the discarded level as explicit features, keeps per-year transductive
+robustness the 2026 nowcast relies on, and avoids the pooled-stats collapse 6.5b
+warned of); **0.40–0.75** ⇒ fix the gate now and note the Phase 9 normalization rung
+carries the remainder. Prior from A10: ungated (TAU=0) already only reaches 0.20, so
+a gate that keeps ≤100% of pixels is not expected to recover — but the scalar refit
+under a quantile gate can move it either way, so it is measured, not assumed.
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —

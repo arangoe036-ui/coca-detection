@@ -202,6 +202,13 @@ def run_loyo(cfg, years, epochs, patience, holdout=None):
         with open(out / "loyo_corrected.jsonl", "a") as fh:
             fh.write(json.dumps({"year": test_year, "ratio": ratio, "pred_ha": pred_ha,
                                  "official_ha": off_ha, "scalar": s, "val_mae": vmae}) + "\n")
+        # Persist per-fold weights so post-hoc gate/scalar experiments are free (no
+        # retrain) — critical under job reaping. Includes the fold's norm stats.
+        ck_dir = Path(cfg["paths"]["checkpoints_dir"]); ck_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({"model": model.state_dict(), "test_year": test_year,
+                    "train_years": train_years, "scalar": s, "tau": TAU,
+                    "year_stats": {int(y): (m, st) for y, (m, st) in stats.items()}},
+                   ck_dir / f"loyo_fold_{test_year}.pt")
 
     ratios = [r for _, r, *_ in results]
     print("\n[loyo] ===== LOYO out-of-year ratio table =====")
