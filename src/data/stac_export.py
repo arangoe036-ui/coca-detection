@@ -134,7 +134,9 @@ def add_indices(s2: "object", cfg: dict):
         # drop the scalar 'band' coord so index arithmetic concats cleanly
         return s2.sel(band=name).drop_vars("band")
 
-    b = {n: band(n) for n in cfg["imagery"]["s2_bands"]}
+    # Floor reflectance at 0 so the baseline-offset correction (which can drive dark
+    # pixels slightly negative) cannot blow indices up via near-zero denominators.
+    b = {n: band(n).clip(min=0.0) for n in cfg["imagery"]["s2_bands"]}
     eps = 1e-6
     defs = {
         "NDVI": (b["B08"] - b["B04"]) / (b["B08"] + b["B04"] + eps),
@@ -144,8 +146,11 @@ def add_indices(s2: "object", cfg: dict):
         "NDRE": (b["B08"] - b["B05"]) / (b["B08"] + b["B05"] + eps),
         "NBR": (b["B08"] - b["B12"]) / (b["B08"] + b["B12"] + eps),
     }
+    # Clip to physical ranges (bounded ratios in [-1,1]; EVI/SAVI wider) — dark-pixel guard.
+    clip = {"NDVI": (-1, 1), "EVI": (-1, 2.5), "SAVI": (-1.5, 1.5),
+            "NDWI": (-1, 1), "NDRE": (-1, 1), "NBR": (-1, 1)}
     wanted = cfg["imagery"]["indices"]
-    arr = xr.concat([defs[i] for i in wanted], dim="band").assign_coords(band=wanted)
+    arr = xr.concat([defs[i].clip(*clip[i]) for i in wanted], dim="band").assign_coords(band=wanted)
     return arr
 
 

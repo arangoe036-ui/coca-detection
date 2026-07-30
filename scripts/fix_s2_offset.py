@@ -39,27 +39,40 @@ EPS = 1e-6
 MARKER = "data/.s2_offset_fixed.json"
 
 
+# Valid ranges for the six indices (NDVI/NDWI/NDRE/NBR are bounded ratios in [-1,1];
+# EVI/SAVI have wider definitional ranges). Subtracting the offset drives dark-pixel
+# reflectance to ~0, so near-zero denominators can blow indices up to ~1e5 — clip to
+# the physical range (matches how the offset data behaved, where refl>=~0.1 kept
+# denominators away from zero).
+_INDEX_CLIP = [(-1.0, 1.0), (-1.0, 2.5), (-1.5, 1.5), (-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0)]
+
+
 def recompute_indices(img):
     """Indices 10-15 from corrected reflectances — identical formulas to
-    stac_export.add_indices. img: (18,H,W)."""
-    B02, B03, B04, B08 = img[0], img[1], img[2], img[3]
-    B05, B12 = img[4], img[9]
+    stac_export.add_indices, with the reflectance floored at 0 and the outputs clipped
+    to physical ranges (dark-pixel denominator guard). img: (18,H,W)."""
+    r = np.clip(img[:N_REFL], 0.0, None)   # reflectance is physically >= 0
+    B02, B03, B04, B08 = r[0], r[1], r[2], r[3]
+    B05, B12 = r[4], r[9]
     ndvi = (B08 - B04) / (B08 + B04 + EPS)
     evi = 2.5 * (B08 - B04) / (B08 + 6 * B04 - 7.5 * B02 + 1 + EPS)
     savi = 1.5 * (B08 - B04) / (B08 + B04 + 0.5 + EPS)
     ndwi = (B03 - B08) / (B03 + B08 + EPS)
     ndre = (B08 - B05) / (B08 + B05 + EPS)
     nbr = (B08 - B12) / (B08 + B12 + EPS)
-    return np.stack([ndvi, evi, savi, ndwi, ndre, nbr]).astype("float32")
+    out = np.stack([ndvi, evi, savi, ndwi, ndre, nbr]).astype("float32")
+    for i, (lo, hi) in enumerate(_INDEX_CLIP):
+        np.clip(out[i], lo, hi, out=out[i])
+    return out
 
 
 def correct_stack(img):
-    """Subtract the offset from reflectance bands (finite pixels only) and recompute
-    indices. Returns a corrected copy; SAR bands 16,17 untouched."""
+    """Subtract the offset from reflectance bands (finite pixels only), floor them at 0,
+    and recompute+clip indices. Returns a corrected copy; SAR bands 16,17 untouched."""
     out = img.astype("float32").copy()
     for c in range(N_REFL):
         m = np.isfinite(out[c])
-        out[c][m] = out[c][m] - OFFSET
+        out[c][m] = np.clip(out[c][m] - OFFSET, 0.0, None)
     out[10:16] = recompute_indices(out)
     return out
 
@@ -80,7 +93,8 @@ def fix_tiles(cfg, year, backup_root):
         print(f"[fix] {year}: no tiles at {tiles_dir}"); return 0
     bdir = backup_root / "tiles" / str(year); bdir.mkdir(parents=True, exist_ok=True)
     for f in npzs:
-        shutil.copy2(f, bdir / f.name)
+        if not (bdir / f.name).exists():   # never overwrite the pristine original backup
+            shutil.copy2(f, bdir / f.name)
         d = np.load(f)
         np.savez_compressed(f, image=correct_stack(d["image"]), mask=d["mask"])
     print(f"[fix] {year}: corrected {len(npzs)} tiles (backup -> {bdir})")
@@ -93,7 +107,8 @@ def fix_raster(cfg, year, backup_root):
     if not path.exists():
         print(f"[fix] {year}: no raster {path}"); return False
     bdir = backup_root / "imagery"; bdir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, bdir / path.name)
+    if not (bdir / path.name).exists():   # never overwrite the pristine original backup
+        shutil.copy2(path, bdir / path.name)
     tmp = path.with_suffix(".fixed.tif")
     with rasterio.open(path) as src:
         prof = src.profile
