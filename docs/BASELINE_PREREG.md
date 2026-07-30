@@ -202,6 +202,41 @@ are annotated (6.6d), and the corrected re-run is published beside them.
 
 ---
 
+## Amendment — Phase 6.6 gate diagnostic (2026-07-29, logged BEFORE the TAU sweep)
+
+**A10 — Is the collapse the presence gate? (registered before computing).** The
+corrected re-run destabilized the offset folds in *both* directions (2022 1.48→0.08,
+2023 1.01→1.33) while clean folds were unchanged. Hypothesis: the presence gate is a
+**bug**, not a design choice — `TAU=0.05` (`config/default.yaml:124`) is a *fixed
+absolute* threshold applied to the output of a **per-year-normalized** model, so it
+removes a *different fraction* of predicted mass each year; correcting the data
+shifted the offset years' output distributions relative to where the gate + frozen
+scalar were calibrated. This is a defect of the same class as the offset and must be
+fixed in the **same** re-run (the correction is what exposed it).
+
+**Test:** sweep `TAU` on the 2022 fold (re-trained; per-fold models were not saved)
+and recompute `aoi_ratio(TAU)`, refitting the calibration scalar at each `TAU` (both
+gated identically, train years only). Pre-registered branches:
+- **Ratio recovers toward ~1 as TAU→0** ⇒ gate confirmed. Fix in 6.6: replace the
+  fixed absolute gate with a **quantile of the train-year prediction distribution**
+  (fit on train years only — input/train-side, never labels/test/errors). Normalization
+  stays a Phase 9 ablation rung (it is a design choice: transductive robustness vs.
+  preserving absolute level).
+- **Ratio does NOT recover** ⇒ gate exonerated; normalization becomes a *correctness*
+  issue and moves into 6.6 alongside the offset fix.
+- **Partial recovery** ⇒ fix the gate in 6.6 and record in the Phase 9 prereg that the
+  normalization rung is expected to carry the remainder.
+
+**Reporting rule (do not overwrite the collapse):** when the gate is fixed, keep the
+three-row progression, one change each — (a) v2.1 contaminated + fixed TAU
+(annotated), (b) corrected + fixed TAU = **the collapse**, (c) corrected + quantile
+TAU = new baseline. Row (b) is the co-adaptation finding and stays published.
+
+Compute note: folds 2023/2024 are **not** to be re-run until the gate question is
+settled (2023 already completed opportunistically: 1.33).
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —
