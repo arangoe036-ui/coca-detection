@@ -265,6 +265,42 @@ under a quantile gate can move it either way, so it is measured, not assumed.
 
 ---
 
+## Amendment — Phase 6.6 level-signal check + aux design (2026-07-29, before computing)
+
+**A12 — Does a per-year input statistic actually carry the cross-year level signal?
+(gates the retrain).** Before spending the one retrain on absolute-level aux inputs,
+verify the signal exists. On the CORRECTED data, compute each candidate per-year
+statistic (mean and std of NBR, B12, B11, NDVI) and correlate it (Pearson, n=6,
+descriptive — no p-values) against official hectares.
+- **Decision:** if a candidate (esp. NBR/B12 **mean**) tracks official total with a
+  clear, directionally-sensible correlation, that is a real level signal → proceed to
+  the retrain using *that* feature; include **std** only for candidates whose std also
+  correlates. If **nothing** correlates → **DO NOT RETRAIN** — the aux inputs would
+  restore a signal that does not exist; report that and route counting to the Phase 6.3
+  hybrid anchor instead.
+
+**Aux-input spec (only if A12 supports it), pinned to avoid year-ID memorization:**
+- **2–4 scalars maximum** (not 16–34). With only 6 distinct per-year values (LOYO sees
+  5), many correlated per-year scalars let the model use them as a **year ID** and
+  memorize a 5-row lookup, extrapolating arbitrarily on the held-out year — leakage-free
+  but harmful. Default: NBR per-year mean+std (+ B12 mean only if A12 supports).
+- **Anomaly-coded vs the TRAIN-year pool:** `aux_y = (stat_y − pool_mean_train) /
+  pool_std_train` (pool stats train-only → label-free; an unseen year lands in an
+  interpretable range, not out-of-distribution). Broadcast as constant planes;
+  `in_channels` 18 → 20 or 21.
+
+**Memorization falsification test (pre-registered, run with the retrain):** shuffle the
+aux values across years — if performance holds, the model used them as a year ID, not a
+level signal (invalidates the aux approach). Cheap variant: predictions must vary
+*smoothly* under synthetic aux perturbation.
+
+**Zero-dimensional-cost alternative (fallback if aux risks memorization):** mixed
+normalization — per-year z-scoring for most channels, but **pooled train-year stats for
+the 1–2 disturbance channels**, so level enters through existing channels with no new
+inputs and no year-ID risk (couples level and spatial pattern in that channel).
+
+---
+
 ## 1. What is being tested
 
 Whether the U-Net is *scientifically justified* over two simpler predictors —
