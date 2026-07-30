@@ -1,3 +1,12 @@
+> **SUPERSEDED (2026-07-29).** This sweep was computed on **buggy-corrected** data:
+> the 6.6a offset correction had an index-blowup bug (dark-pixel NBR/NDVI up to
+> ~1e5, inflating 2022's per-year std to ~21 and compressing those channels under
+> z-scoring). The "collapse" this sweep analyzes (2022 ≈ 0.07–0.20) was largely that
+> artifact. After the bug fix, the 2022 fold retrains to **ratio 1.75** (over-predict,
+> no collapse). The gate-exoneration reading below therefore does **not** stand;
+> re-run the gate analysis on the fixed fold before drawing conclusions. Kept for the
+> record per the no-overwrite rule.
+
 # Phase 6.6 — Presence-gate (TAU) sweep on the 2022 fold (corrected data)
 
 Prereg: A10. Re-trained 2022 LOYO fold on corrected data; scalar refit at each TAU (train years only). Official 2022 = 37,965 ha. v2.1 (contaminated, TAU=0.05) = 1.48; corrected @ TAU=0.05 = 0.08 (the collapse).

@@ -1,3 +1,9 @@
+> **SUPERSEDED (2026-07-29).** Computed on the **buggy-corrected** 2022 fold (index
+> blowup at dark pixels — see the gate-sweep doc). The collapse it analyzes was
+> largely that artifact; the fixed fold retrains to **ratio 1.75** (over-predict, not
+> a collapse), so the "normalization is a correctness issue" verdict below does **not**
+> stand and must be re-adjudicated on fixed data. Kept per the no-overwrite rule.
+
 # Phase 6.6 (A11) — Quantile gate on the corrected 2022 fold (post-hoc)
 
 Scale-invariant gate: keep the top `f_keep` fraction of pixels per year (`f_keep`=0.201, fit on train years as the mean keep-rate at 0.05); scalar refit on quantile-gated train predictions. Official 2022 = 37,965 ha.
