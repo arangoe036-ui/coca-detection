@@ -101,6 +101,74 @@ pre-registered outcome that fired, and an explicit statement of what remains une
 
 ---
 
+## Phase 6.6 — Fix the Sentinel-2 baseline-04.00 offset (NEW — now the top priority)
+
+Phase 6.5 found the root cause: `stac_export.py:89` does `DN/10000` without subtracting
+the `BOA_ADD_OFFSET = -1000` that ESA introduced with **Processing Baseline 04.00
+(effective 2022-01-25)**. Correct conversion is `(DN − 1000)/10000`. All 2022–2024 S2
+reflectances are inflated by ~0.1. Evidence: every visible band steps +0.100 at exactly
+2021→2022 (= 1000/10000) while SAR is flat, and NDVI compresses 0.68→0.50, which is what
+adding a constant to both NIR and Red does to a normalized ratio.
+
+Mechanism: per-year mean-centering silently removes the constant from *raw* bands, but
+the six index channels are nonlinear functions of the offset reflectances and are
+computed **before** normalization — so no normalization can undo it. The offset must be
+subtracted before indices are computed.
+
+**This is a correctness bug, not an optimization. It precedes all remaining phases.**
+
+### 6.6a Implement the correction
+- Key the correction on the **processing-baseline / `BOA_ADD_OFFSET` metadata field**,
+  not acquisition date. Scenes acquired pre-2022-01-25 but reprocessed later carry
+  baseline 04.00 and the offset; a date rule mis-classifies them. Fall back to the date
+  rule only where metadata is unavailable.
+- Apply **per scene**, not per year — 2022 composites are a mix.
+- Subtract **before** computing indices.
+
+### 6.6b Regenerate and verify (model-free — do before any training)
+- Regenerate 2022–2024 tiles (plus 2025/2026 nowcast inputs), **asserting the
+  block→split assignment is byte-identical** to the previous index (§8.1 hard rule).
+- Re-run `scripts/verify_channels.py` and update the documented channel table.
+- **Acceptance without any model:** the +0.100 step at 2021→2022 disappears, and per-year
+  NDVI returns to ~0.68 for 2022–2024. If it doesn't, the fix is wrong — stop.
+
+### 6.6c Pre-register the differential prediction, then re-run LOYO
+The sharp, falsifiable test: the fix should **improve 2022–2024 folds specifically and
+leave 2019–2021 roughly unchanged.** If 2019–2021 shift materially, something else is
+also wrong. Register this before re-running. Report how much of the original 0.271 spread
+the fix removes.
+
+**Known residual:** 2020 is a clean pre-offset year and still misses by −0.41. The offset
+cannot explain it. Do not let a successful fix obscure this — it remains the open
+question, and per-year normalization stays the leading suspect for it.
+
+### 6.6d Audit the blast radius and annotate published results
+The offset affects everything post-Jan-2022, including work already written up. Per prime
+directive #3, **annotate — do not silently overwrite.** Add a dated caveat to
+`BASELINE_LADDER_RESULTS.md` noting it was computed on contaminated 2022–2024 data, and
+flag specifically that:
+- **"NDVI is the floor"** is suspect — NDVI is the most corrupted channel, so part of its
+  deficit may be the bug rather than physics.
+- **"SWIR/NBR dominates, NDVI 15/18"** is suspect — NBR is also an index, also corrupted.
+  The ranking may shift.
+- Every LOYO fold is affected, including clean-year folds, since each **trains** on
+  2022–2024.
+- The method comparison remains internally fair (all methods saw the same corruption), so
+  the *direction* U-Net > RF > NDVI is likely robust; the magnitudes are not.
+
+Then re-run the baseline ladder after the fix and publish both tables side by side.
+
+Also audit and re-derive: `calibration.json` (`fit_year: 2023`, fit on contaminated
+data), `ui/data/density_*_cog.tif` for 2022+, `ui/data/municipal_coca_2023.csv` and the
+0.05–1.69 range, the README's 2023 figures, the 2025/2026 nowcast, and
+`outputs/catatumbo_2023_coca.geojson`.
+
+**Acceptance:** model-free checks pass; differential prediction registered before the
+re-run; LOYO re-run reported; published results annotated, not overwritten; blast-radius
+audit committed.
+
+---
+
 ## Phase 7 — Fix the supervision (~12–16h)
 
 ### 7.1 Aggregate-consistent loss
@@ -245,6 +313,41 @@ readily as a win.
 - Report gated **and** ungated, and state n every time (gating leaves n=4).
 - Do not build the U-TAE temporal model (`src/models/temporal.py:13`).
 - Keep `data/` and `.venv` out of git. Disk will roughly double — expected and accepted.
+
+---
+
+## Phase 10 — 2026 forecast (DEFERRED — revisit only after Phase 9 consolidation)
+
+Placeholder so the intent is not lost. **Do not start this before Phase 9 is done.**
+
+Naive version to avoid: publishing a 2026 hectare total. That is exactly the capability
+Track B measured as failing (loses to the N2 historical mean), from a partial year of
+imagery, in a year that already produced a phantom decline
+(`docs/coverage_check.md:14`), with no official census to check against until roughly
+late 2027.
+
+Version worth building, when the time comes:
+1. **Forecast the ranking, not the magnitude** — which municipalities rank highest and
+   where growth concentrates. This is the validated capability (spatial, 6/6).
+2. **Magnitude as an interval from the anchor**, not the network — the Phase 6.3 hybrid,
+   with the measured ±40% and an explicit statement that the total's accuracy comes from
+   the historical anchor.
+3. **Pre-register it with a commit hash and timestamp before the truth exists**, and
+   state the scoring rule in advance (top-3 municipalities, direction of change, interval
+   coverage). Score it publicly when SIMCI publishes, win or lose.
+4. **Handle the partial year explicitly** — declared data cutoff, the existing coverage
+   correction, and the encoded prior that coca is a standing perennial and does not halve
+   mid-year. Consider a provisional mid-2026 nowcast plus a full-year estimate once the
+   composite completes in early 2027.
+5. **Ethics line:** municipality-level and aggregate only, never plot-level. A
+   backward-looking map is monitoring; a forward-looking one drifts toward targeting.
+   Frame as policy statistics, not operational intelligence — consistent with the
+   existing 75 m / municipal-aggregate stance.
+
+The model does not need to win. If the baseline beats it again, report that — consistency
+with the earlier findings is the credibility.
+
+---
 
 ## Order of work and reporting points
 
