@@ -39,6 +39,12 @@ dev = ["ipykernel", "jupyter", "pytest", "ruff"]
 line-length = 100
 target-version = "py311"
 
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["."]          # so `import src...` and `import tests...` work from the repo root
+addopts = "-ra"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

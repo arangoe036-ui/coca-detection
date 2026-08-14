@@ -3,19 +3,32 @@
 # files inside an ignored dir, which would hide the small UI results below).
 /data/
 /outputs/
-# ui/data: ignore everything EXCEPT the small UI-needed vector/tabular results
+# ui/data: DENY everything, then re-include ONLY named municipal-aggregate artifacts.
+#
+# This used to whitelist by EXTENSION (`!ui/data/*.geojson`), which was a real hazard:
+# the never-publish artifact is `outputs/catatumbo_2023_coca.geojson` — 2,065 plot-level
+# 20 m polygons, targeting-usable — and it is a .geojson. Dropping any plot-level
+# geojson into ui/data/ would have made it tracked, so the 75 m / municipal-aggregate
+# rule was being enforced only by which directory today's code happens to write to.
+# Enforce it here instead. Adding a NEW artifact must be a deliberate act.
 ui/data/*
-!ui/data/*.geojson
-!ui/data/*.csv
-!ui/data/*.json
+!ui/data/municipal_coca.csv
+!ui/data/municipal_coca.geojson
+!ui/data/municipal_coca_20[0-9][0-9].csv
+!ui/data/municipal_coca_20[0-9][0-9].geojson
+!ui/data/trend.json
 *.tif
 *.tiff
 *.ckpt
 *.pt
 *.pth
 checkpoints/
-# but DO keep the small downsampled COG(s) the map overlay needs (after *.tif so this wins)
-!ui/data/*_cog.tif
+# Re-include the blurred 75 m map-overlay COGs (after *.tif so this wins) — but by a
+# CONSTRAINED pattern, not `!ui/data/*_cog.tif`. That glob would have tracked any COG at
+# any resolution dropped in here, which is the same hazard as the extension whitelist
+# above. A file must now be named density_<year>_cog.tif to be included, which cannot
+# happen by accident.
+!ui/data/density_20[0-9][0-9]_cog.tif
 
 # --- Python ---
 __pycache__/
@@ -38,3 +51,20 @@ service-account*.json
 .DS_Store
 .idea/
 .vscode/
+
+# --- Agent config ---
+# Was untracked AND un-ignored, so `git add -A` would have silently committed it.
+# Ignored so that publishing it is a deliberate choice. The agent definitions are
+# arguably a portfolio asset (they document the review workflow), so if you want them
+# public do it on purpose: `git add -f .claude/`.
+.claude/
+
+# --- NEVER PUBLISHABLE, anywhere in the tree, regardless of every rule above ---
+# Plot/field-level geometry is targeting-usable and is the one irreversible mistake this
+# project could make. Listed LAST so these deny rules win against any re-include.
+# (`outputs/` is already ignored; this is belt-and-braces for a file that gets moved.)
+catatumbo_*_coca.geojson
+*plot*.geojson
+*parcel*.geojson
+*field*.geojson
+*footprint*.geojson
