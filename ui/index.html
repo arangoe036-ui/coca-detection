@@ -27,11 +27,10 @@
 
       <section id="totals" aria-label="Area totals"></section>
 
-      <section class="block" id="trend-block">
-        <h2>Coca trajectory — how much</h2>
-        <div id="trend-chart" class="trend-chart"></div>
-        <p class="hint" id="trend-note">Official census (solid) + scenario projection (dashed).</p>
-      </section>
+      <!-- "Coca trajectory — how much" chart removed 2026-08-10. It plotted a hectare
+           extrapolation to 2026, which is out of scope: this tool answers WHERE coca is,
+           not how much there is. A pre-registered test found no imagery-based estimator
+           beats a historical average at counting, so magnitude claims were withdrawn. -->
 
       <section class="block">
         <h2>Density overlay — where</h2>
@@ -43,12 +42,11 @@
         </label>
       </section>
 
-      <section class="block">
-        <h2>Measure</h2>
-        <button id="draw-btn" type="button">Draw area to sum hectares</button>
-        <div id="draw-result" class="chip" hidden></div>
-        <p class="hint">Approximate — computed on the downsampled overlay.</p>
-      </section>
+      <!-- "Measure / Draw area to sum hectares" removed 2026-08-10: a hectare-measurement
+           tool in a location-only deliverable. It also carried a real bug — setupDraw() was
+           called from loadYear(), registering a fresh pm:create handler on every year change,
+           so after switching years once the second handler deleted the rectangle the first
+           had just drawn. -->
 
       <section class="block">
         <h2>Hotspots</h2>
@@ -64,9 +62,23 @@
       <details id="howto" class="block">
         <summary>How to read this</summary>
         <div class="howto-body">
-          <p><strong>Location and ranking are reliable</strong> — where coca is, and which municipalities lead (Tibú first every year), match the official record. Individual plot boundaries are not resolved; the imagery is for visual context only.</p>
-          <p><strong>Absolute hectares are reliable only for years with an official census.</strong> For a year without one, out-of-sample validation shows totals can be off by roughly <strong>±40%</strong> — read the number as an estimate with that band, not a firm figure.</p>
-          <p>Years without an official census (2025 onward) are shown as an <strong>unvalidated nowcast</strong> — UNODC figures lag ~18 months. Satellite imagery is a multi-date mosaic and may not match the analysis year.</p>
+          <p><strong>This map answers where, not how much.</strong> Hectare totals are out of
+            scope: a pre-registered test found no imagery-based estimator beats simply averaging
+            past official counts, because coca covers ~3.6% of this region and its year-to-year
+            change is under 1% of the area — far below normal seasonal variation.</p>
+          <p><strong>Ranking is the stronger claim; per-municipality accuracy varies a lot.</strong>
+            The largest municipalities rank correctly (Tibú leads every year), but agreement with
+            the official census ranges from about <strong>0.05× to 1.69×</strong> across the ten
+            municipalities. Read the ranking, not any single municipality's number.</p>
+          <p><strong>Resolution: ~1 km cells, not fields.</strong> The official labels are a ~1 km
+            grid with one value spread across every pixel of each cell, so this can only agree
+            about <em>which ~1 km cells</em> contain coca. Individual plot boundaries are never
+            resolved, and published rasters are deliberately blurred to 75 m. The satellite
+            imagery is a multi-date mosaic for visual context and may not match the analysis year.</p>
+          <p><strong>Metrics are being re-measured (2026-08-10).</strong> An internal audit found
+            two preprocessing defects and a train/test overlap in the evaluation split. Numbers
+            previously published here were withdrawn rather than adjusted; the corrected re-run is
+            pre-registered.</p>
         </div>
       </details>
 

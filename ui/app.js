@@ -4,10 +4,24 @@
    controls, draw-a-box hectare sums, and a data-driven year selector with a
    nowcast badge for years lacking an official census. */
 
-// Years available as data. `nowcast:true` => no official census; label it.
-// 2026 parked (partial-year artifact); 2025 is the full-year nowcast.
-const YEARS = [{ year: 2023, nowcast: false }, { year: 2025, nowcast: true }];
-const BAND = 0.40;          // LOYO out-of-year magnitude band (±40%) for nowcast years
+// Years shown. 2026-08-10: ONLY years with a real official census are listed now.
+//
+// The 2025/2026 "nowcast" years were removed along with their artifacts. src/nowcast.py
+// never set cfg["year"], so those files carried the 2023 census in `official_ha`, a `ratio`
+// computed against 2023, and a `year` column that literally read 2023 — and popupHtml()
+// below does not branch on `nowcast`, so clicking a municipality on the 2025 map rendered
+// "Official 23,030 ha / Ratio 1.50x" against a census that does not exist. The panel-level
+// caveat was defeated by the popup one click away. That is fabricated validation, and it
+// could not be caveated into correctness because the wrong values were inside the data.
+//
+// Every year below has a genuine census, so `official_ha` and `ratio` are now always real.
+// Only 2023 has a density overlay; loadOverlay() degrades gracefully for the others.
+const YEARS = [
+  { year: 2022, nowcast: false },
+  { year: 2023, nowcast: false },
+  { year: 2024, nowcast: false },
+];
+const BAND = 0.40;          // retained: referenced by the (now unreachable) nowcast branch
 let currentMeta = {};
 const INSPECT_ZOOM = 13;
 const ACCENT = "#e6a01f";
@@ -107,31 +121,9 @@ document.getElementById("threshold").addEventListener("input", (e) => {
   makeDensityLayer(); // recolor by rebuilding with the new cutoff
 });
 
-// ---- draw-a-box -> sum hectares ----------------------------------------------
-function setupDraw() {
-  const pixelHa = densityRaster
-    ? (densityRaster.pixelWidth * densityRaster.pixelHeight) / 1e4 : 0;
-  document.getElementById("draw-btn").onclick = () => {
-    map.pm.enableDraw("Rectangle", { snappable: false });
-  };
-  map.on("pm:create", (e) => {
-    map.pm.disableDraw();
-    map.eachLayer((l) => { if (l._drawnMeasure) map.removeLayer(l); });
-    e.layer._drawnMeasure = true;
-    const chip = document.getElementById("draw-result");
-    try {
-      const gj = e.layer.toGeoJSON();
-      const sumFrac = geoblaze.sum(densityRaster, gj)[0] || 0;
-      const ha = sumFrac * pixelHa;
-      chip.hidden = false;
-      chip.textContent = `≈ ${fmt(ha)} ha coca in drawn area`;
-    } catch (err) {
-      chip.hidden = false;
-      chip.textContent = "Could not compute for that area.";
-      console.warn(err);
-    }
-  });
-}
+// ---- draw-a-box -> sum hectares: REMOVED 2026-08-10 --------------------------
+// A hectare-measurement tool is out of scope for a location-only deliverable, and this
+// summed the 75 m blurred overlay, so its answer was never a real area measurement.
 
 // ---- choropleth --------------------------------------------------------------
 let layer;
@@ -222,51 +214,11 @@ function buildPanel(gj) {
   });
 }
 
-// ---- official-census trajectory chart (magnitude layer) ----------------------
-async function loadTrend() {
-  let t;
-  try { t = await (await fetch("data/trend.json")).json(); }
-  catch (e) { console.warn("trend.json unavailable", e); return; }
-
-  const W = 300, H = 130, ml = 40, mr = 10, mt = 10, mb = 22;
-  const off = t.official, proj = t.projection;
-  const pts = off.map((d) => ({ x: d.year, y: d.ha }))
-    .concat(proj.map((d) => ({ x: d.year, y: d.mean })));
-  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y)
-    .concat(proj.map((d) => d.hi));
-  const xmin = Math.min(...xs), xmax = Math.max(...xs);
-  const ymax = Math.max(...ys) * 1.05, ymin = 0;
-  const X = (x) => ml + (x - xmin) / (xmax - xmin) * (W - ml - mr);
-  const Y = (y) => mt + (1 - (y - ymin) / (ymax - ymin)) * (H - mt - mb);
-  const k = (v) => (v / 1000).toFixed(0) + "k";
-
-  const offLine = off.map((d, i) => `${i ? "L" : "M"}${X(d.year)},${Y(d.ha)}`).join(" ");
-  const last = off[off.length - 1];
-  const projLine = `M${X(last.year)},${Y(last.ha)} ` +
-    proj.map((d) => `L${X(d.year)},${Y(d.mean)}`).join(" ");
-  const bandTop = [{ x: last.year, y: last.ha }].concat(proj.map((d) => ({ x: d.year, y: d.hi })));
-  const bandBot = proj.slice().reverse().map((d) => ({ x: d.year, y: d.lo }))
-    .concat([{ x: last.year, y: last.ha }]);
-  const band = bandTop.concat(bandBot).map((p, i) => `${i ? "L" : "M"}${X(p.x)},${Y(p.y)}`).join(" ") + " Z";
-
-  const yticks = [0, ymax / 2, ymax].map((v) =>
-    `<text x="${ml - 5}" y="${Y(v) + 3}" text-anchor="end" class="ax">${k(v)}</text>`).join("");
-  const xticks = [xmin, 2024, xmax].map((x) =>
-    `<text x="${X(x)}" y="${H - 6}" text-anchor="middle" class="ax">${x}</text>`).join("");
-  const dots = off.map((d) => `<circle cx="${X(d.year)}" cy="${Y(d.ha)}" r="2.5" class="dot"/>`).join("");
-
-  document.getElementById("trend-chart").innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Official coca hectares and scenario projection">
-      <path d="${band}" class="band"/>
-      <path d="${offLine}" class="line-off"/>
-      <path d="${projLine}" class="line-proj"/>
-      ${dots}${yticks}${xticks}
-    </svg>`;
-  const p26 = proj.find((d) => d.year === 2026) || proj[proj.length - 1];
-  document.getElementById("trend-note").innerHTML =
-    `Official 2019–2024 (solid) + scenario to ${p26.year} (dashed, shaded = 80%). ` +
-    `~${(t.annual_growth_rate * 100).toFixed(0)}%/yr <em>if the trajectory holds</em> — not a forecast.`;
-}
+// ---- official-census trajectory chart: REMOVED 2026-08-10 -------------------
+// Plotted official hectares plus a scenario projection to 2026 from trend.json. Both the
+// chart and its data file are gone: hectare magnitude is out of scope, and this chart
+// directly contradicted the map it sat above (its 2025 upper bound was 47,802 ha while
+// the 2025 nowcast layer totalled 55,888 ha, 17% higher, on the same screen).
 
 // ---- legend ------------------------------------------------------------------
 function buildLegend() {
@@ -286,7 +238,10 @@ async function loadYear(year) {
   await loadChoropleth(year);
   await loadOverlay(year);
   makeDensityLayer();
-  setupDraw();
+  // setupDraw() call removed 2026-08-10 with the Measure panel. It would now throw on a
+  // null #draw-btn, and calling it from here was itself the bug: it registered a fresh
+  // pm:create handler on every year change, so the accumulated handlers deleted each
+  // other's rectangles after the first year switch.
 }
 
 const yearSel = document.getElementById("year");
@@ -298,7 +253,10 @@ const paramYear = new URLSearchParams(location.search).get("year");
 const initialYear = YEARS.some((y) => String(y.year) === paramYear) ? paramYear : String(YEARS[0].year);
 yearSel.value = initialYear;
 buildLegend();
-loadTrend();
+// loadTrend() removed 2026-08-10: trend.json was a HECTARE-MAGNITUDE extrapolation
+// ("scenario to 2026"), which is out of scope now that the deliverable is location only.
+// It also contradicted the map — the 2025 nowcast total was 55,888 ha while this chart's
+// own upper bound for 2025 was 47,802 ha, 17% lower, rendered 200px apart on one screen.
 loadYear(initialYear);
 window.addEventListener("load", () => setTimeout(() => map.invalidateSize(), 120));
 window.addEventListener("resize", () => map.invalidateSize());
