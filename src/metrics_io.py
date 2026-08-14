@@ -44,6 +44,11 @@ def write_run(cfg: dict, method: str, fold_year: int, metrics: dict,
     """
     out = metrics_dir(cfg)
     rec = {
+        # Which generation of the DATA this was computed on. Three now exist and they are
+        # not comparable: gen1 carried a reflectance offset bug, 25% blank coverage in
+        # 2019/2020 AND a train/test pixel overlap; gen2 fixed only the offset. Without
+        # this field a gen1 and a gen3 number look identical in the file.
+        "data_generation": str(cfg["project"]["data_generation"]),
         "method": method,
         "track": track,
         "fold_year": int(fold_year),

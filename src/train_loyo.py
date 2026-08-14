@@ -113,13 +113,18 @@ def _mae(model, loader, device):
     return tot / n
 
 
-def train_fold(cfg, train_rows, val_rows, stats, device, epochs, patience):
+def train_fold(cfg, train_rows, val_rows, stats, device, epochs, patience, history=None):
+    """`history`: optional list, appended one dict per epoch. Without it a finished run
+    leaves NO record of how many epochs it actually ran — early stopping means the
+    `--epochs` flag is an upper bound, not the answer — so a checkpoint's provenance
+    could not be stated. Callers that persist a checkpoint should pass a list and save it."""
     model = build_unet(cfg).to(device)
     loss_fn = SigmoidMSELoss().to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["train"]["lr"])
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
     tl, vl = _loader(cfg, train_rows, stats, True), _loader(cfg, val_rows, stats, False)
     best, best_state, wait = 1e9, None, 0
+    best_ep = 0   # stays 0 only if no epoch ever improved (e.g. a NaN val MAE)
     for ep in range(1, epochs + 1):
         model.train()
         for xb, yb in tl:
@@ -128,12 +133,19 @@ def train_fold(cfg, train_rows, val_rows, stats, device, epochs, patience):
             opt.zero_grad(); loss.backward(); opt.step()
         sched.step()
         vm = _mae(model, vl, device)
-        if vm < best - 1e-5:
+        improved = vm < best - 1e-5
+        if improved:
             best, best_state, wait = vm, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}, 0
+            best_ep = ep
         else:
             wait += 1
-            if wait >= patience:
-                break
+        if history is not None:
+            history.append({"epoch": ep, "val_mae": float(vm), "improved": bool(improved)})
+        print(f"    [ep {ep:02d}/{epochs}] val_mae={vm:.5f}"
+              + ("  * best" if improved else f"  no-improve {wait}/{patience}"), flush=True)
+        if not improved and wait >= patience:
+            print(f"    early stop at epoch {ep} (best epoch {best_ep})", flush=True)
+            break
     if best_state:
         model.load_state_dict(best_state)
     return model, best
@@ -230,14 +242,26 @@ def train_final(cfg, years, epochs, patience):
     tr = [r for r in rows if int(r["year"]) in years and r["split"] == "train"]
     va = [r for r in rows if int(r["year"]) in years and r["split"] == "val"]
     print(f"[final] train on ALL years {years}: {len(tr)} train / {len(va)} val tiles", flush=True)
-    model, vmae = train_fold(cfg, tr, va, stats, device, epochs, patience)
+    history: list[dict] = []
+    model, vmae = train_fold(cfg, tr, va, stats, device, epochs, patience, history=history)
+    # The all-zero predictor's val MAE. On a target where >99% of pixels are 0 this is a
+    # small number, so a "good-looking" val_mae proves nothing on its own; recorded next to
+    # it so the comparison can never be omitted from a write-up.
+    zero_mae = float(np.mean([np.abs(np.load(Path(cfg["paths"]["tiles_dir"]) / r["npz"])["mask"]
+                                     .astype("float32")).mean() for r in va]))
     s = fit_scalar(cfg, model, tr, stats, device)
     ckpt_dir = Path(cfg["paths"]["checkpoints_dir"]); ckpt_dir.mkdir(parents=True, exist_ok=True)
     out = ckpt_dir / "final_multiyear.pt"
     torch.save({"model": model.state_dict(),
                 "year_stats": {int(y): (m, st) for y, (m, st) in stats.items()},
-                "scalar": float(s), "tau": TAU, "years": years}, out)
-    print(f"[final] val_mae={vmae:.4f} scalar={s:.3f} -> saved {out}", flush=True)
+                "scalar": float(s), "tau": TAU, "years": years,
+                "epochs_requested": int(epochs), "patience": int(patience),
+                "epochs_run": len(history), "history": history,
+                "val_mae": float(vmae), "val_mae_all_zero_null": zero_mae,
+                "n_train_tiles": len(tr), "n_val_tiles": len(va),
+                "data_generation": str(cfg["project"]["data_generation"])}, out)
+    print(f"[final] epochs_run={len(history)}/{epochs} val_mae={vmae:.5f} "
+          f"(all-zero null {zero_mae:.5f}) scalar={s:.3f} -> saved {out}", flush=True)
     return out
 
 

@@ -1,4 +1,11 @@
-"""Baseline U-Net with a satellite-pretrained encoder (plan §7.1).
+"""Baseline U-Net. NOTE: the encoder is currently RANDOMLY INITIALISED (plan §7.1).
+
+`config`'s `encoder_weights: ssl4eo` lands in `geo_keys` below, so `None` is passed to
+`smp.Unet`, and `_load_geo_encoder_weights()` is still a no-op that only warns. The net
+effect is that naming a geo source *disables* the ImageNet weights smp would otherwise
+load. Setting `encoder_weights: imagenet` is the cheap lever; wiring real geo weights is
+the expensive one. (Docstring corrected 2026-08-10 — it previously asserted the encoder
+was satellite-pretrained.)
 
 Wraps segmentation_models_pytorch. The KEY accuracy lever (plan §4) is using a
 backbone pretrained on satellite imagery (torchgeo SSL4EO weights, or a geo

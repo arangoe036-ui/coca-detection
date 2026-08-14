@@ -45,15 +45,51 @@ def year_stats_from_raster(image_path: str, factor: int = 8):
     return mean, std
 
 
+#: Hard floor on the ground resolution of any published raster (prereg A18). Public artifacts
+#: are 75 m blurred COGs + municipal aggregates; finer geometry is targeting-usable.
+MIN_PUBLISH_RES_M = 75.0
+
+
 def write_cog(density: np.ndarray, profile, out_path: Path, long_side: int = 1500):
+    """Downsample `density` and write a COG.
+
+    `long_side` is a PIXEL COUNT, not a resolution — so the 75 m figure everyone quotes was
+    only ever arithmetic on Catatumbo's width (~112 km / 1500 px). Nothing asserted it. For a
+    narrower AOI (`config` already offers `region: tumaco`) `factor` drops below 1 and this
+    function would UPSAMPLE past the native 20 m grid and write it to a tracked directory with
+    no error at all. That is the one irreversible mistake this project could make, so the
+    resolution is now checked rather than assumed (prereg A18).
+    """
+    # Resolution checks run BEFORE any import: `rio_cogeo` is not even installed in this
+    # environment, so importing first made the guard unreachable — it would raise
+    # ModuleNotFoundError before ever checking resolution. A safety check that a missing
+    # unrelated dependency can skip is not a safety check.
+    h, w = density.shape
+    factor = max(h, w) / long_side
+    if factor < 1.0:
+        raise ValueError(
+            f"write_cog would UPSAMPLE (factor={factor:.3f} < 1) for a {w}x{h} input at "
+            f"long_side={long_side}. That publishes finer-than-native geometry. Reduce "
+            f"long_side for this AOI.")
+    nh, nw = int(h / factor), int(w / factor)
+    src_res = abs(profile["transform"].a)
+    out_res = src_res * (w / nw)
+    if out_res < MIN_PUBLISH_RES_M:
+        raise ValueError(
+            f"write_cog output resolution {out_res:.2f} m is finer than the "
+            f"{MIN_PUBLISH_RES_M:.0f} m publication floor (input {src_res:.2f} m, "
+            f"{w}x{h} -> {nw}x{nh}). Refusing to write {out_path.name}: plot-level geometry "
+            f"is targeting-usable. Lower long_side.")
+
+    # Heavy/optional imports only after the guard has passed. NOTE: `rio_cogeo` is NOT in
+    # requirements.txt and is not installed, so this function cannot currently run at all —
+    # which is consistent with there being no code path in this repo that reproduces the
+    # tracked ui/data/density_2023_cog.tif.
     from affine import Affine
     from rasterio.enums import Resampling
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
-    h, w = density.shape
-    factor = max(h, w) / long_side
-    nh, nw = int(h / factor), int(w / factor)
     with rasterio.open(tempfile.mktemp(suffix=".tif"), "w", driver="GTiff", height=h, width=w,
                        count=1, dtype="float32", crs=profile["crs"], transform=profile["transform"],
                        nodata=0) as src:
