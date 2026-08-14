@@ -1,5 +1,49 @@
 # Phase 6.1 — Per-year coverage vs out-of-year error (Catatumbo, 2019–2024)
 
+> ## ⚠ THE REJECTION BELOW USED A COVERAGE METRIC BLIND TO THE ACTUAL DEFECT — 2026-08-10
+>
+> This document rejected the coverage hypothesis using **mean and median clear observations
+> per pixel**. Neither statistic can detect a region with *zero* observations. Measured
+> directly on the composites, the fraction of the AOI where Sentinel-2 has **no valid data at
+> all** (reflectance median exactly 0, because `scl_mask_classes` omits SCL 0/1) is:
+>
+> | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 |
+> |--:|--:|--:|--:|--:|--:|
+> | **25.3%** | **25.3%** | **12.2%** | 0.7% | 0.7% | 0.7% |
+>
+> Confirmed real S2 loss, not mosaic edge: inside 2019's blank region Sentinel-1 VV is 97.2%
+> valid at −7.14 dB. A year with a quarter of its AOI unobserved can still post the *highest*
+> mean clear/px (2020: 32.7) because the observed remainder is densely covered — which is
+> exactly what happened. **Fact #1 below ("2020 has the single best coverage of all six
+> years") is an artifact of averaging over a hole.**
+>
+> **Argument #3 inverts.** It reasoned that the error direction was backwards for a coverage
+> mechanism. Re-ranked on blank-fraction: 2019 (25.3%) → 0.95, 2020 (25.3%) → **0.59**,
+> 2021 (12.2%) → 0.90 all **under-predict**, mean 0.81; the three clean-footprint years give
+> 1.48 / 1.01 / 0.79, mean 1.09. Under-prediction where the imagery is blank is precisely the
+> predicted direction, and the most-affected year is the worst fold.
+>
+> **A confound this exposes:** the blank-coverage years (2019–2021) are exactly the
+> *non-offset* years, and the clean-footprint years (2022–2024) are exactly the
+> *offset-inflated* years. The two defects push predictions in **opposite** directions on
+> **opposite** year groups. So the v2.1 LOYO headline — "unbiased but wide, mean 0.95, std
+> 0.271", presented as the model's accepted ceiling — is substantially two data bugs
+> cancelling, not measured model variance.
+>
+> **Consequences that must be revisited, not assumed:**
+> - "Skip Phase 6.2 (coverage gate)" rested on 2020 passing any input-side threshold. On
+>   blank-fraction it would not.
+> - "Phase 8 sensor additions are aimed at the wrong problem" and the Phase 8.3 **HLS
+>   deletion** both rested on optical coverage being ample. HLS (Landsat-harmonised) fills
+>   exactly these gaps. That rationale is **live again**.
+> - "The indicated lever is Phase 7 (supervision)" followed from "coverage is not the
+>   bottleneck", which is no longer established.
+> - **Most important: the headline counting failure is now provisional.** Whether the model
+>   beats the N2 historical-mean null must be re-measured after both defects are fixed. It may
+>   still lose — but the existing measurement cannot settle it.
+>
+> Nothing here is overwritten; the original analysis stands below as it was computed.
+
 Optical (Sentinel-2 clear observations) and SAR (Sentinel-1 passes) measured
 **separately** per full calendar year (prereg A7). `|ratio−1|` is the U-Net's
 frozen LOYO out-of-year error (`docs/v2.1_loyo_results.md`). n=6 — descriptive

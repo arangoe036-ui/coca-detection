@@ -1,5 +1,34 @@
 # Baseline Ladder — Results
 
+> ## ⚠ NUMBERS BELOW ARE CONTAMINATED — annotation added 2026-08-10 (Phase 6.6d)
+>
+> Every figure in this document was computed **before** the Sentinel-2 baseline-04.00
+> offset was fixed. `stac_export.py` did `DN/10000` without subtracting
+> `BOA_ADD_OFFSET = -1000`, so **all 2022–2024 reflectances were inflated by ~0.1**.
+> Per prime directive #3 this document is **annotated, not overwritten**; the corrected
+> re-run will be published beside it.
+>
+> **Scope of the damage:**
+> - **Every LOYO fold is affected, including the clean-year folds**, because each one
+>   *trains* on 2022–2024.
+> - **"NDVI is the floor" is suspect.** NDVI is the most corrupted channel — adding a
+>   constant to both NIR and Red compresses the ratio — so part of its deficit may be
+>   the bug rather than physics.
+> - **"SWIR/NBR dominates, NDVI 15/18" is suspect.** NBR is also an index computed from
+>   offset reflectances. The ranking may shift.
+> - **What likely survives:** all three methods saw the *same* corruption, so the
+>   *direction* U-Net > RF > NDVI is probably robust. The **magnitudes are not.**
+>
+> **Status of the fix (2026-08-10):** the offset correction is implemented, keyed on the
+> `s2:processing_baseline` metadata field and applied per scene before indices, and it
+> **passed** the model-free Phase 6.6b acceptance check — the +0.100 visible-band step at
+> 2021→2022 is now **+0.0013** (`scripts/acceptance_6_6b.py`). All six years of imagery
+> and 3,450 tiles have been regenerated on the corrected pipeline. The baseline ladder
+> re-run on that data is **pending** and will replace this table.
+>
+> See [`a12_level_signal.md`](a12_level_signal.md) for what the corrected data then showed
+> about the counting failure.
+
 Generated from `outputs/metrics/baseline_ladder.jsonl` (42 runs; reproduce the
 tables with `python -m src.baselines.compare`). Interpretation is the
 pre-registration in [`BASELINE_PREREG.md`](BASELINE_PREREG.md), applied verbatim —

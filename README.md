@@ -4,7 +4,7 @@ A two-part system that maps where coca is grown in Colombia from **free satellit
 imagery** (Sentinel-2 + Sentinel-1), validated against Colombia's official coca
 statistics:
 
-1. **Engine** — an ML model (U-Net, satellite-pretrained encoder) that predicts coca
+1. **Engine** — an ML model (U-Net with a ResNet-34 encoder) that predicts coca
    **density/presence** per pixel.
 2. **Map UI** — a Leaflet/MapLibre web map showing coca hotspots by municipality with a
    year slider; zooming into a hotspot streams a high-res satellite basemap for human
@@ -16,16 +16,71 @@ statistics:
 > communities. Visual confirmation is done by a human reviewing public basemap imagery
 > ("algorithm flags, analyst verifies").
 
-See [`coca-detection-build-plan.md`](../coca-detection-build-plan.md) for the full plan
-(the single source of truth). This README covers setup and status.
+**Resolution floor (harm reduction).** Public artifacts are **75 m blurred rasters and
+municipality-level aggregates only**. A plot-level 20 m footprint file (2,065 polygons) exists
+locally, is gitignored, and has **never appeared in any commit** — verified across full history.
+It is targeting-usable, so the resolution gap is a deliberate choice rather than a limitation.
+
+Planning docs live in [`docs/`](docs/) — [`START_HERE.md`](START_HERE.md) for current state,
+[`docs/BASELINE_PREREG.md`](docs/BASELINE_PREREG.md) for the pre-registered decision rules.
+*(This previously pointed at `../coca-detection-build-plan.md` as "the single source of truth" — a
+parent-directory path that has never been in the repo and never can be. Corrected 2026-08-10.)*
+
+## ⚠ Status of the numbers below (2026-08-10)
+
+**The P3/P4/v2.1 figures in this section were computed on contaminated imagery** and are
+retained, not deleted, per the project's no-overwrite rule. ESA Processing Baseline 04.00
+introduced `BOA_ADD_OFFSET = -1000` on 2022-01-25; the export did `DN/10000` without
+subtracting it, so all **2022–2024 reflectances were inflated by ~0.1**, and every
+leave-one-year-out fold trained on those years.
+
+The offset is now **fixed and verified**: the +0.100 visible-band step at 2021→2022 is down
+to **+0.0013** on regenerated data (`scripts/acceptance_6_6b.py`), and all six years plus
+3,450 tiles have been rebuilt. **The corrected re-run of these numbers is pending.** Until
+it lands, treat every figure below as indicative of *direction* only, not magnitude — see
+[`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md) for the detailed
+blast-radius annotation.
+
+**Two findings that do not depend on the corrected re-run**, both from pre-registered tests:
+
+- **The model localizes but does not count.** It beats a context-free random forest and an
+  NDVI threshold at deciding which 1 km cells contain coca (6/6 folds), but for total
+  hectares in a censusless year it does **not** beat predicting the historical mean of past
+  official counts.
+- **Why counting fails is now measured, not guessed.** Coca is ~3.6% of this AOI and the
+  entire 2020→2024 swing is 0.8% of its area, putting its contribution to any AOI-wide
+  statistic **20–30× below** ordinary year-to-year weather variation. This is a
+  signal-to-noise limit, not a fixable modelling choice — so the planned auxiliary-input
+  retrain was **cancelled** rather than attempted. See
+  [`docs/a12_level_signal.md`](docs/a12_level_signal.md).
 
 ## Status
 
 - [x] **P0 — Scaffold** (repo structure, env, `config/default.yaml`, `.gitignore`, README).
 - [x] **P1 — Data** (proven end-to-end on a smoke slice). P1a ✅ imagery (Planetary Computer, 18-band GeoTIFF). P1b ✅ labels (Socrata `v3rx-q7t3` density grid → aligned mask; `acs4-3wgp` validation table). P1c ✅ tiling + spatial block split. *Next: scale to full AOI / 4 seasons for a real split (time-costly — confirm first).*
-- [x] **P2 — Baseline model.** U-Net (18-ch). Two tasks via `model.task`: **regression** (coca fraction → calibrated hectares, current default) and segmentation (binary presence). Trained on the real geographic split. *Remaining lever: geo-pretrained encoder weights.*
-- [x] **P3 — Evaluation.** Current density-regression model (`final_multiyear.pt`), held-out test blocks, **cell-level** presence-IoU **0.474** / F1 **0.636** (thr 0.02, per-year mean across 2019–2024). Labels are ~1 km cells burned uniformly (`src/data/labels.py:107`), so this is agreement with which **1 km cells** contain coca, **not** field-level localization. *(The earlier `IoU 0.665 / F1 0.799 / AP 0.877, thr 0.504` were the superseded single-year-2023 **binary-segmentation** metrics — a different task and threshold. See [`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md) for the full baseline-ladder comparison.)*
-- [x] **P4 — Inference & outputs.** Density raster + municipal choropleth (GeoJSON/CSV) + footprint polygons + density-map PNG. **Calibrated area: predicted 46,843 ha vs official 39,815 ha (1.18×). Per-municipality: Tibú 0.98, El Tarra 0.95, Teorama 1.05 of official.** (Binary-presence baseline was 9.2× — density regression fixed the calibration.)
+- [x] **P2 — Baseline model.** U-Net (18-ch). Two tasks via `model.task`: **regression** (coca fraction → calibrated hectares, current default) and segmentation (binary presence). Trained on the real geographic split. **Encoder weights — corrected 2026-08-10:** the encoder is **randomly initialised**, not pretrained. `config` sets `encoder_weights: ssl4eo`, which `src/models/unet.py` routes into `geo_keys` → passes `encoder_weights=None` to `smp.Unet`, and `_load_geo_encoder_weights()` is still a **no-op that only emits a warning** (`P2 TODO`). So the config choice silently *disables* the ImageNet weights the model would otherwise receive. Two untaken levers, cheapest first: set `encoder_weights: imagenet` for real pretrained weights, or wire genuine geo-pretrained weights (SSL4EO/Prithvi/Clay).
+- [ ] **P3 — Evaluation. NUMBERS RETRACTED 2026-08-10, awaiting re-measurement.** This line
+  previously reported cell-level presence-IoU **0.474** / F1 **0.636**. Those came from folds that
+  (a) trained on offset-inflated 2022–2024, (b) used composites with 25.3% of the 2019/2020 AOI
+  silently blank, and (c) used a tile→block assignment that put 13.7% of test pixels into training.
+  The metrics artifact they cite no longer exists, so they cannot even be inspected. **Treat 0.474
+  as deleted, not as a number awaiting adjustment.**
+  What survives is the *scope* statement, which was always correct: labels are ~1 km cells burned
+  uniformly (`src/data/labels.py:107`), so any metric here is agreement with **which ~1 km cells**
+  contain coca — never field-level localization. Re-measurement is pre-registered
+  ([`docs/BASELINE_PREREG.md`](docs/BASELINE_PREREG.md)) and now includes a **persistence null**
+  (A16) that the original comparison never had: coca is a perennial, so "it is where it was last
+  year" must be beaten before spatial skill can be claimed at all.
+- [x] **P4 — Inference & outputs.** Density raster + municipal choropleth (GeoJSON/CSV) + density-map PNG.
+  **Figures removed 2026-08-10, not caveated.** This line previously published "predicted 46,843 ha
+  vs official 39,815 ha (1.18×)" and per-municipality ratios "Tibú 0.98, El Tarra 0.95, Teorama 1.05".
+  Those numbers appear in **no artifact and no other document** — the run that produced them was
+  deleted — and the three ratios contradict the tracked `ui/data/municipal_coca_2023.csv`, which
+  gives Tibú 0.963, El Tarra 0.974 and **Teorama 0.895** (flipping it from over- to
+  under-predicting). The "46,843" also mixed two different official totals: the municipal table
+  sums to 43,058 while 39,815 is the grid total. Publishing three municipalities also violated
+  this project's own rule (`START_HERE.md`: *publish all 10, not the best 3*) — the real range is
+  **0.05 to 1.69**. Hectare reporting is now out of scope entirely; see Status above.
 - [x] **P5 — Map UI.** Leaflet console (`ui/`): municipal choropleth (YlOrBr) over CARTO light + Esri imagery crossfade, density COG overlay with opacity/threshold sliders, draw-a-box→hectares, dark side panel (totals, ranked hotspots with fly-to, legend, honest caveats). Serve with `python -m http.server` from `ui/`.
 
 ### v2 (engine fixes + interactive map)
@@ -35,7 +90,14 @@ See [`coca-detection-build-plan.md`](../coca-detection-build-plan.md) for the fu
 
 ### v2.1 (multi-year retrain + LOYO) — final
 - [x] **Multi-year model** (2019–2024 pooled), **per-year normalization**, **frozen calibration**, **6-fold leave-one-year-out** validation. See [`docs/v2.1_loyo_results.md`](docs/v2.1_loyo_results.md).
-- **Verdict (accepted ceiling):** LOYO out-of-year ratios span **0.59–1.48 (mean 0.95, ±0.27)** — unbiased but wide. **Location & municipal ranking are reliable; within-year calibrated totals are reliable; absolute hectares for a censusless year carry a ~±40% band.** 2026 can only be an *exploratory* nowcast, never a validated figure.
+- **Verdict RETRACTED 2026-08-10.** This previously read: *"LOYO out-of-year ratios span 0.59–1.48
+  (mean 0.95, ±0.27) — unbiased but wide … within-year calibrated totals are reliable."* That
+  spread is now known to be substantially **two data defects cancelling**, not model variance: the
+  offset bug inflated 2022–2024 while the blank-coverage bug suppressed 2019–2021, and the two
+  year-groups are exactly complementary. "Unbiased but wide" was the *symptom* of the corruption,
+  which is why it looked publishable. Also, "within-year calibrated totals are reliable" describes
+  a circular fit — the scalar is fitted to the same year's census (`src/infer.py:218`), so the 2023
+  total matching official is arithmetic, not evidence. Hectares are now out of scope.
 
 **Not pursued** (would need paid data or large compute for uncertain gain): Phase-5 temporal U-TAE, geo-pretrained encoder, plot-level detection (paid sub-meter imagery + hand labels, ~$15–60k).
 
@@ -72,19 +134,58 @@ src/models/           # unet, temporal (stretch), losses
 src/{train,evaluate,infer}.py
 ui/                   # Phase 5 Leaflet/MapLibre app
 notebooks/            # 01 explore GEE · 02 inspect tiles · 03 inspect predictions
-data/  outputs/  ui/data/   # gitignored — imagery/labels/tiles/rasters/checkpoints
+data/  outputs/            # gitignored — imagery/labels/tiles/rasters/checkpoints
+ui/data/                   # NOT gitignored: the small municipal aggregates + 75 m COGs
+                           # the map needs are tracked, by explicit filename allow-list
 ```
 
 ## Guardrails
 
-- **Free data only** for the core build (Sentinel-2 + Sentinel-1 via GEE).
+- **Free data only** for the core build (Sentinel-2 L2A + Sentinel-1 RTC via the Microsoft
+  Planetary Computer STAC API — no Google Earth Engine, no signup).
 - **Spatial** train/val/test split — never a random pixel split.
 - Class imbalance → **Dice+Focal** loss, oversample positive tiles, evaluate with IoU/F1.
 - **Smallest end-to-end slice first**; prove each phase's acceptance check before scaling.
-- **Never commit** imagery / labels / outputs / checkpoints.
+- **Never commit** imagery / labels / model outputs / checkpoints. The exception is `ui/data/`,
+  which IS tracked — but by an explicit filename allow-list in `.gitignore`, not by extension.
+  It previously whitelisted `*.geojson` and `*_cog.tif`, which could not distinguish municipal
+  polygons from field polygons or 75 m from 20 m; the never-publish artifact is itself a
+  `.geojson`. Adding any new artifact there must be deliberate (`git add -f`).
 
-## Before running P1+ — confirm (plan §13)
+## Configuration status
 
-Region, target year, GEE auth, ODC layer export path, basemap choice, and Phase-6 scope.
-These are unresolved; `config/default.yaml` holds **placeholder** defaults marked `# TBD`.
+*(This section previously said the region, auth, and export paths were "unresolved
+placeholders marked `# TBD`". That was stale P0-era text — corrected 2026-08-10.)*
+
+The pipeline is **configured and running end to end**. Region is Catatumbo (Norte de
+Santander), `utm_epsg: 32618`, 20 m grid, 18 channels, 2019–2024. Imagery needs **no
+credentials** — Planetary Computer signs asset URLs anonymously. Labels come from the public
+Socrata endpoint on `datos.gov.co` (no API key).
+
+Residual `# TBD` markers in `config/default.yaml` refer to *untaken options*, not missing
+setup: an alternative AOI (`tumaco`) and the encoder-weights lever noted under P2.
+
+**Rebuild order** — labels → imagery → tiles → **split** → train → evaluate:
+
+```powershell
+python -m src.data.stac_export --full --year 2019   # per year; ~12 sub-tiles each
+# re-tile. Writes the SUPERSEDED band split, so it refuses to clobber a gen4 index
+# without the flag, and archives the gen4 pair before replacing it.
+python -m src.data.multiyear --years 2019 2020 2021 2022 2023 2024 --force-band-split-index
+# TERMINAL STEP, not optional: assign the A20 stratified macro-block folds and verify them.
+python -m src.data.multiyear --rebuild-block-folds
+```
+
+**The second command's output is not usable on its own.** It assigns splits with the gen3
+contiguous-band rule, whose test fold on this AOI holds **zero coca pixels** — every
+`presence_iou` on it is `0/0` printed as `0.000` — while the config still stamps `gen4` on every
+metrics row. `--rebuild-block-folds` is what produces a split that is both leak-free and
+signal-bearing, and it is the only path that runs the verification (prereg **A20**). If you
+already have tiles on disk you need only that last command; it reassigns the existing tiles and
+does not re-tile.
+
+Verified on Windows 2026-08-10: 6 annual mosaics (~8.5 GB) and 3,450 tiles (9.35 GB), with
+the label totals reproducing the official census exactly for all six years and the
+block→split assignment identical across years (0 inconsistencies). The gen4 split (2026-08-14)
+keeps 436 of the 575 tile positions — 292 train / 64 val / 80 test, 2,616 rows over six years.
 ```

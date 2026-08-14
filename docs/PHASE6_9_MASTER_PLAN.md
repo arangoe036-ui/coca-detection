@@ -232,13 +232,32 @@ Add per-pixel **valid-observation count** as an input channel, separately for op
 and SAR. The model currently cannot distinguish *"no coca here"* from *"I could not see
 this pixel"* — this is the minimal fix and it also feeds Phase 6.2's gate.
 
-### 8.3 HLS — RATIONALE DEAD AFTER PHASE 6.1. DROP.
+### 8.3 HLS — STILL NOT BUILT, but the recorded reason was WRONG. Corrected 2026-08-11.
 
-HLS was justified by the premise that 2020 lacked clear looks. Phase 6.1 measured
-**32.7 clear observations/pixel in 2020 — the best of all six years** — while 2020 is
-the second-worst fold. Optical coverage across all years is 25.5–32.7 clear looks/pixel,
-which is ample. Adding more optical looks addresses a bottleneck that does not exist.
-**Do not build this.** Record the reason so the decision is auditable.
+**The old rationale is known-false and is retained here only so the error is auditable:**
+*"Phase 6.1 measured 32.7 clear observations/pixel in 2020 — the best of all six years …
+optical coverage is ample. Adding more optical looks addresses a bottleneck that does not
+exist."*
+
+That reasoning used **mean/median clear-observations per pixel, which cannot detect a region
+with ZERO observations.** In fact **25.3% of the 2020 AOI had no valid Sentinel-2 data at all**
+(`docs/coverage_by_year.md`, annotated). A year can post the highest mean while a quarter of it
+is unobserved, because the observed remainder is densely covered — which is exactly what
+happened. So "coverage is ample" was false, and the coverage bottleneck was real.
+
+**The decision not to build HLS nevertheless stands**, on a different and now-tested basis:
+prereg A13 reinstated 8.3 only if the gap exceeded 15% after correcting our own filtering. It
+was measured at **0.72%** (2020 and 2021, down from 25.25% and 12.18%). The gap was
+self-inflicted — a scene-level `cloud_cover_max: 40` discarding whole partly-clear scenes — and
+it closed in config. Adding a second sensor would buy nothing.
+
+**Reopen condition, fixed in advance:** any year exceeding **5% blank** after the corrected
+re-export. Enforced by `tests/test_data_invariants.py::test_blank_fraction_under_bar`, so this
+reopens automatically rather than on someone's recollection.
+
+The lesson worth keeping is not about HLS: **a decision to skip 30 hours of work rested on a
+metric that was structurally blind to the thing it was measuring.** Prefer a metric that can
+express zero.
 
 ### 8.4 ALOS/PALSAR annual mosaics (25 m, L-band SAR) — rationale SURVIVES, but screen first
 
@@ -343,6 +362,32 @@ Version worth building, when the time comes:
    backward-looking map is monitoring; a forward-looking one drifts toward targeting.
    Frame as policy statistics, not operational intelligence — consistent with the
    existing 75 m / municipal-aggregate stance.
+
+6. **Policy regime change breaks the anchor's core assumption — raised 2026-08-10.** A new
+   Colombian government is expected to push coca *down*, which makes a genuine turning point
+   likely rather than hypothetical. This matters because the hybrid anchor is a **historical
+   mean**, and §5.3 of the ladder results already establishes that N2 **predicts zero change
+   by construction** and is therefore blind to turning points — its single worst year was
+   **2024 (0.85)**, exactly the largest real move (+11.1%). An anchor that lagged a real
+   increase will lag a policy-driven decrease the same way, in the opposite direction.
+
+   Consequences that must be designed for, not discovered afterwards:
+   - **Do not publish a magnitude forecast that leans on stationarity.** Either state the
+     stationarity assumption and its failure mode explicitly, or widen the interval to admit
+     a policy-driven break — and say which was chosen, in advance.
+   - **Rankings are more robust than totals, but not immune.** A *uniform* proportional
+     decline leaves the ranking intact while destroying the total, which is the main argument
+     for forecasting rank. But eradication and substitution programmes are typically
+     **spatially targeted**, and targeted reduction reshuffles rank directly. So the ranking
+     claim's robustness depends on whether the intervention is broad or concentrated —
+     an empirical question, not something to assume.
+   - **Consider making the direction claim the headline instead**, pre-registered with the
+     policy reasoning stated: it is falsifiable, it is honest about resting partly on
+     policy expectation rather than imagery, and it does not pretend the anchor can see a
+     break it structurally cannot.
+   - **Record the policy context with the forecast**, so a future reader can tell whether a
+     miss came from the model, from the anchor's stationarity assumption, or from a policy
+     shift nobody could have read out of Sentinel pixels.
 
 The model does not need to win. If the baseline beats it again, report that — consistency
 with the earlier findings is the credibility.

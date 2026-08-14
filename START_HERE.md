@@ -12,6 +12,37 @@ their own labels. This checks against an independent government survey.
 
 ## ⚠ Honest current state — read before trusting any number
 
+> ### UPDATE 2026-08-10 — the data blocker is cleared
+>
+> - **The offset fix is implemented and verified.** Keyed on the `s2:processing_baseline`
+>   metadata field, applied per scene before indices. Model-free acceptance (Phase 6.6b)
+>   **PASSED**: the +0.100 visible-band step at 2021→2022 is now **+0.0013**
+>   (`scripts/acceptance_6_6b.py`).
+> - **All data regenerated on the corrected pipeline:** 6 annual mosaics (~8.5 GB) and
+>   3,450 tiles (9.35 GB). Label totals reproduce the official census **exactly** for all
+>   six years; block→split assignment is identical across years (0 inconsistencies).
+> - **A12 ran and CLOSED the planned retrain.** No per-year input statistic tracks official
+>   hectares. (An earlier version of this line said "best correctly-signed r = +0.355" —
+>   **that is retracted**: on a fixed all-years-valid footprint B11 flips to −0.621 and B12 to
+>   −0.709, so **no candidate is correctly signed at all**. The verdict is unchanged and if
+>   anything firmer. See the correction block in `docs/a12_level_signal.md`.)
+>   Coca is ~3.6% of the AOI and the whole
+>   2020→2024 swing is 0.8% of its area, so its contribution to any AOI-wide statistic is
+>   **20–30× below** interannual weather variation. The counting failure is a
+>   signal-to-noise wall, not a modelling choice — so **per-year normalization is refuted
+>   as the mechanism** rather than merely unproven, and both the aux-input design and the
+>   mixed-normalization fallback are dead. Counting routes to the Phase 6.3 hybrid anchor.
+>   See [`docs/a12_level_signal.md`](docs/a12_level_signal.md).
+> - **Still pending:** baseline-ladder re-run and one Track A retrain on the corrected
+>   tiles. Until those land, every published metric remains contaminated.
+>
+> One caveat that cannot be discharged on this machine: §8.1 requires diffing the new
+> block→split index against the old one, and `data/` was never committed, so **no old index
+> exists here**. Verified instead that the assignment is deterministic *and*
+> order-independent given `seed: 42`, and that all six mosaics share identical dimensions.
+> "Identical to the split behind the published Phase 3 numbers" is therefore an assumption,
+> not a verified fact.
+
 **The project is mid-debug. Published figures in `README.md` are contaminated.**
 
 What is **established**:
@@ -58,23 +89,46 @@ Public artifacts stay at **75 m** blurred COGs + **municipality-level** aggregat
 That resolution gap is a deliberate harm-reduction choice, not an accident. Framing stays
 monitoring/statistics — **not** an enforcement target list.
 
-## Windows: yes, this transfers
+## Windows: it transfers, but THREE code fixes were required
 
-I checked. **No code changes needed.**
+*(Corrected 2026-08-10 after actually doing it. This section previously claimed "no code
+changes needed" and gave install commands that fail on current hardware. Both were wrong.)*
 
-- No hardcoded POSIX paths in any tracked file
-- No unix-only shell calls
-- 23 files use `pathlib`, which is portable by design
+Portability of paths was fine — no hardcoded POSIX paths, no unix-only shell calls, 23 files
+use `pathlib`. But three **runtime** defects surfaced only on Windows, all in
+`src/data/stac_export.py`, and none of them announce themselves:
 
-The only friction is the geospatial stack. **Use conda-forge, not pip** — `rasterio`, `GDAL`,
-`geopandas`, `fiona`, and `pyproj` are painful to pip-install on Windows and trivial via conda.
+1. **dask's threaded scheduler deadlocks** with rasterio/GDAL reads. The export hangs
+   **forever at ~0% CPU with zero bytes written and no error** — it looks like a slow
+   download, indefinitely. Observed: 80 minutes hung; 28 seconds with
+   `dask.config.set(scheduler="synchronous")`. Not a thread-count issue — 8 workers also
+   hung. **Parallelism must come from one PROCESS per year**, never threads.
+2. **No retry on transient reads.** Azure blob range reads intermittently return 0 bytes
+   (`TIFFFillTile:Read error ... got 0 bytes, expected 407674`), and a single dropped read
+   killed an entire year. Fired 11 times over one full 6-year rebuild.
+3. **Resume validation must detect truncation.** A GeoTIFF truncated mid-write still opens
+   and still reports the correct band count, so existence and `count` are not sufficient —
+   read a far-corner pixel of the last band.
+
+### Environment that actually works (verified 2026-08-10)
+
+**conda is not required.** Modern pip wheels for the geospatial stack install cleanly on
+Windows; this box has no conda at all. `uv` + pip wheels gave rasterio 1.5.1, geopandas
+1.1.4, pyogrio 0.13 with zero build steps.
+
+⚠ **Do not use the cu121 wheel.** An RTX 5080 is Blackwell (**sm_120**); cu121 ships no
+sm_120 kernels. Use **cu128 or newer**, then verify `sm_120` appears in
+`torch.cuda.get_arch_list()` — a mismatch here degrades silently rather than erroring.
 
 ```powershell
-conda create -n coca -c conda-forge python=3.11 rasterio geopandas shapely pyproj fiona
-conda activate coca
-pip install torch --index-url https://download.pytorch.org/whl/cu121   # CUDA build
-pip install -r requirements.txt
+uv venv .venv --python 3.12
+uv pip install --python .venv\Scripts\python.exe torch --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+.venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.get_arch_list())"
 ```
+
+Verified working: torch 2.11.0+cu128, `sm_120` present, real matmul on device, and all 13
+core modules importing clean against pandas 3.0 / numpy 2.5 / geopandas 1.1.
 
 **A Windows box with an NVIDIA GPU will train faster than the Mac did** — CUDA beats MPS here,
 so this is an upgrade, not a compromise.
@@ -100,16 +154,27 @@ the offset too.
 
 ## Where to pick up
 
-`docs/PHASE6_9_MASTER_PLAN.md` is the live plan. Next four steps, cheapest first:
+`docs/PHASE6_9_MASTER_PLAN.md` is the live plan. **Revised 2026-08-10** — steps 1 and the
+aux-retrain branch are closed; the data is rebuilt, so start at step 2:
 
-1. **Gate/quantile re-test** on the saved fixed-2022 fold — free, ~6 min. `gate_threshold: 0.05`
-   is a *fixed absolute* cut applied to per-year-normalized outputs, so it removes a different
-   fraction of predicted mass every year. Likely a second latent bug.
+1. ~~**Gate/quantile re-test**~~ — **DONE** (A10/A11). Gate exonerated as the primary cause;
+   see `docs/gate_sweep_2022.md` and `docs/quantile_gate_2022.md`, both marked SUPERSEDED
+   because they were computed on buggy-corrected data.
+   ~~**Aux-input retrain**~~ — **CANCELLED** by A12; the level signal does not exist.
 2. **Re-run the RF + NDVI baselines** on corrected data — nearly free, no GPU. Resolves whether
-   "NDVI is the floor" was partly the offset bug.
+   "NDVI is the floor" was partly the offset bug. **← start here**
 3. **Retrain the multiyear model + clean Track A** — one training run. Buys back the *positive*
    spatial result. Track A never needed LOYO.
-4. **Track B 6-fold LOYO** — expensive; grind opportunistically and report honest n.
+4. **Phase 6.3 hybrid anchor** — historical mean sets the total, the U-Net distributes it
+   spatially. Now the *designated* counting route rather than a fallback, and it removes the
+   2023 calibration circularity.
+5. **Track B 6-fold LOYO** — expensive; grind opportunistically and report honest n.
+
+Cheap lever noticed 2026-08-10 and not yet taken: the encoder is **randomly initialised**, not
+pretrained — `config`'s `encoder_weights: ssl4eo` routes to `geo_keys`, which passes `None` to
+`smp.Unet` while `_load_geo_encoder_weights()` remains a no-op warning. Setting
+`encoder_weights: imagenet` would give real pretrained weights for free. Treat it as a
+pre-registered ablation, not a silent change.
 
 **Expected landing:** the offset was a genuine correctness fix that doesn't recover counting →
 route counting to a **hybrid anchor** (historical mean sets the total, U-Net distributes it
