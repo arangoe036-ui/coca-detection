@@ -8,6 +8,14 @@
 project:
   name: coca-detection
   seed: 42
+  # Which generation of the DATA a metric was computed on. Stamped into every row of
+  # outputs/metrics/*.jsonl so numbers from different generations can never be silently
+  # compared. Bump this whenever the imagery or tiling changes meaning.
+  #   gen1  original            — S2 BOA offset bug + 25% blank coverage + block-straddle leak
+  #   gen2  offset fixed only   — archived in data/imagery/prefix_A13/
+  #   gen3  offset + coverage fixed, leak-free splits
+  #   gen4  stratified macro-block splits — gen3's band split had a coca-free test fold  <- current
+  data_generation: gen4
 
 # --- Area of interest & time window (plan §13 Q1, Q2) ------------------------
 aoi:
@@ -31,8 +39,18 @@ imagery:
   s2_bands: [B02, B03, B04, B08, B05, B06, B07, B8A, B11, B12]
   s1_bands: [vv, vh]
   indices: [NDVI, EVI, SAVI, NDWI, NDRE, NBR]            # appended as extra bands
-  cloud_cover_max: 40        # eo:cloud_cover scene filter (%)
-  scl_mask_classes: [3, 8, 9, 10, 11]   # SCL: shadow, cloud med/high, cirrus, snow -> masked
+  # Prereg A13 (2026-08-10). Was `cloud_cover_max: 40`, which rejects WHOLE scenes by
+  # eo:cloud_cover — a 45%-cloudy scene was discarded even where it was clear, which in
+  # cloudier years starved whole regions of observations. Per-pixel SCL masking below makes
+  # scene-level pre-filtering largely redundant, so this now only excludes near-total overcast
+  # (which costs download time and contributes nothing).
+  cloud_cover_max: 80        # eo:cloud_cover scene filter (%)
+  # Prereg A13. Was `[3, 8, 9, 10, 11]`, which omitted SCL 0 (NO_DATA) and 1 (SATURATED) —
+  # so nodata pixels were treated as VALID and their median came out as exactly 0.0
+  # reflectance, indistinguishable from real data. That silently blanked 25.3% of the AOI in
+  # 2019/2020 and 12.2% in 2021 while leaving 2022-2024 at 0.7%, producing a year-varying
+  # footprint that confounded every cross-year comparison. 0 and 1 must be masked.
+  scl_mask_classes: [0, 1, 3, 8, 9, 10, 11]   # nodata, saturated, shadow, cloud med/high, cirrus, snow
   n_seasonal_composites: 4   # median composites across the year (fills cloud gaps + phenology)
   composite_reducer: median  # median | geomedian
   # 20 m working resolution: official labels are ~1 km grid cells, so 20 m is ample
