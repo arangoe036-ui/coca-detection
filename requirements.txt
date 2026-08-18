@@ -26,6 +26,10 @@ scikit-learn>=1.4
 # used directly by src/rank_municipal.py for Spearman rho (A17): the reference
 # implementation, because a hand-rolled one diverges from it under rank ties
 scipy>=1.11
+# src/nowcast.py:write_cog — required to write the tracked 75 m COGs the map serves.
+# Its absence was defect O4: the A18 resolution guard was UNREACHABLE because the
+# import raised first, so no code path here could reproduce ui/data/*_cog.tif.
+rio-cogeo>=5.0
 albumentations>=1.4
 pyyaml>=6.0
 tqdm>=4.66
