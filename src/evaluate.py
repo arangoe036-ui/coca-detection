@@ -38,9 +38,59 @@ def _collect(model, loader, device):
     return np.concatenate(ps), np.concatenate(ts)
 
 
+class DegenerateComparison(AssertionError):
+    """A metric was requested on inputs that cannot produce a measurement.
+
+    Subclasses ``AssertionError`` so existing ``except AssertionError`` handlers
+    and ``pytest.raises(AssertionError)`` still catch it, while callers that want
+    to distinguish "the comparison was impossible" from "the comparison was bad"
+    can catch this specifically.
+    """
+
+
 def _metrics_at(probs, targets, thr, t_thr=0.5):
+    """Presence IoU/F1/precision/recall at a decision cut. FROZEN by prereg A19.
+
+    **Degeneracy guard (prereg A21, added 2026-08-14).** With no positive target
+    every one of ``tp``, ``fp``, ``fn`` is 0, so the ``+ 1e-6`` terms below turn
+    ``0/0`` into a printed **0.000** with no warning — indistinguishable from a
+    method that genuinely scored zero. That is exactly how gen3 shipped: its test
+    split held no coca, and every ``presence_iou`` on it (U-Net, RF, NDVI and the
+    A16 persistence nulls alike) was a non-measurement dressed as a measurement.
+    A16 exists to stop an unearned claim, so this raises rather than returning.
+
+    The guard fires on a degenerate **comparison**, never on a degenerate
+    **result**:
+
+    * empty input, or a target with no positive under ``t_thr`` -> raise. There is
+      nothing to be right or wrong about; no value is defensible.
+    * an all-zero *prediction* against a target that does contain positives ->
+      **returned normally**. ``tp = 0`` and ``fn > 0`` give ``iou = 0/fn = 0``
+      exactly, with the epsilon immaterial. "This method detects nothing here" is
+      an earned result, and A16's decision rule explicitly provides for a model
+      that loses to its null. Raising on it would also crash a legitimately
+      all-zero persistence variant out of A19's max-of-three, which would *lower*
+      the U-Net's bar — the one direction A19 forbids.
+
+    Values on valid input are unchanged; the arithmetic below is untouched.
+    """
+    probs = np.asarray(probs)
+    targets = np.asarray(targets)
+    if probs.size == 0 or targets.size == 0:
+        raise DegenerateComparison(
+            f"_metrics_at got an empty array (probs={probs.size}, targets={targets.size}) "
+            "— an empty comparison is not a score of 0.0; check the split has rows")
+
     pred = probs > thr
     t = targets > t_thr
+    n_pos = int(t.sum())
+    if n_pos == 0:
+        raise DegenerateComparison(
+            f"_metrics_at: target has NO positive pixel above t_thr={t_thr} "
+            f"(n={targets.size}) — iou/precision/recall/f1 would all be 0/0 returned "
+            "as 0.000 with no warning. This is the gen3 blocker B1; fix the split "
+            "(prereg A20) rather than reporting the number")
+
     tp = np.logical_and(pred, t).sum()
     fp = np.logical_and(pred, ~t).sum()
     fn = np.logical_and(~pred, t).sum()

@@ -986,3 +986,79 @@ against a gen4 U-Net number would manufacture a false 6/6, and `compare._dedup_l
 mechanism (open defect, tracked, not fixed here). **(b)** `project.data_generation` is bumped to
 **`gen4`**, so every row written to `outputs/metrics/baseline_ladder.jsonl` carries the stamp;
 any row without it, or with `gen3`, is untrustworthy by default.
+
+---
+
+## Amendment — A21: the metric refuses to score a comparison it cannot make (2026-08-14, BEFORE any metric is recomputed)
+
+A20 fixed the *split* that made `presence_iou` unmeasurable. A21 fixes the *metric*, so that if
+a split like that ever recurs the number stops rather than prints. Registered here because it
+touches the pre-registered metric path, and written before any number is recomputed on gen4.
+
+**The mechanism, stated exactly.** `src/evaluate.py:_metrics_at` computes
+`iou = tp / (tp + fp + fn + 1e-6)`, and likewise for precision and recall. When the target
+contains no positive above `t_thr`, all three counts are 0 and every metric returns **`0.000`
+with no warning** — arithmetically indistinguishable from a method that genuinely detected
+nothing. On gen3 that is precisely what happened, six folds running.
+
+**Where the guard goes, and why not only in the null.** `_metrics_at` is the single shared
+implementation. Every Track A arm reaches it:
+
+```
+track_a._per_year_write -> common.regression_metrics -> evaluate._evaluate_regression:77 -> _metrics_at
+baselines.persistence:102 ------------------------------------------------------------> _metrics_at
+evaluate._evaluate_segmentation:96 ---------------------------------------------------> _metrics_at
+```
+
+Guarding only `src/baselines/persistence.py` would have covered the **safer** side. The
+asymmetric danger recorded in A20 and in `KNOWN_DEFECTS.md` B1 is a self-consistent null paired
+against a differently-sourced model number: a persistence arm that crashes is loud and harmless,
+whereas a U-Net, RF or NDVI arm silently posting `0.000` against a live null is how a false 6/6
+gets built. The guard therefore lives in `_metrics_at` itself and protects all five arms.
+
+**What it asserts.** `_metrics_at` raises `DegenerateComparison` (a subclass of `AssertionError`,
+so existing handlers still catch it) when:
+
+1. either input array is **empty** — an empty split is the absence of a measurement, not a score
+   of zero; or
+2. the target contains **no positive above `t_thr`** — nothing to be right or wrong about, and
+   no returned value would be defensible.
+
+**What it deliberately does NOT reject: an all-zero prediction.** This was decided explicitly
+rather than by omission. With `tp = 0` and `fn > 0`, `iou = 0 / fn = 0` *exactly* — the epsilon
+is immaterial and the zero is earned. Three reasons it is recorded rather than raised:
+
+- "This method detects nothing on this ground" is a real result, and A16's decision rule already
+  provides for a model that loses to its null. A project whose stated stance is that "a
+  rigorously-established negative result is acceptable" cannot make its own negative results
+  unreportable.
+- The failure A16 guards against is a *non-measurement* wearing a measurement's clothes. A zero
+  against a target that does contain positives is not that.
+- Raising would crash a legitimately all-zero persistence variant out of A19's **max-of-three**,
+  which would **lower** the U-Net's bar. A19 states that adding variants may only raise the bar;
+  a guard that can lower it is worse than the problem.
+  Instead `src/baselines/persistence.py` records `pred_all_zero` and `n_target_positive` in each
+  metrics row, so a genuine `0.000` is distinguishable from the rejected `0/0` in the sink and
+  not only in prose.
+
+**It changes no value on valid input, and that is demonstrated, not asserted.** The arithmetic is
+untouched; only two early raises were added. A 16-case battery spanning both production cuts
+(`thr=0.02, t_thr=0.0` and `thr=0.5, t_thr=0.5`), exact-boundary inputs, all-correct, all-wrong,
+all-zero-prediction and sparse fields at the AOI's ~3.6% positive rate was evaluated before and
+after: **all 16 bit-identical** on every one of the four returned metrics.
+`tests/test_degeneracy_guard.py` pins four of those cases as exact float constants captured from
+the pre-guard implementation, so any future drift in this A19-frozen function fails the suite.
+
+**Method-specific preflight for the persistence null.** Two things `_metrics_at` cannot check for
+it are asserted in `src/baselines/persistence.py:preflight`, which validates **all six folds
+before the first metrics row is written**: each fold's `test` row set is non-empty, and every
+sibling year the rule needs (P1's source year plus all five P2 years) exists at every test
+position. `_presence` already raised on a missing sibling, but mid-run, after earlier folds had
+been appended to the append-only sink — leaving a partial record nothing downstream could
+detect. Hoisting the same check makes the module write six folds or none.
+
+**Consequence to accept in advance.** If a future split fails these conditions, the baselines
+**crash instead of producing a table**. That is the intended behaviour and must not be worked
+around by catching the exception, lowering `t_thr`, or substituting `nan`/`0.0` — the correct
+response is to fix the split under A20 and rerun. Nothing about A16's ≥5/6 rule, A19's
+max-of-three, or the metric's cuts is changed by this amendment.
