@@ -23,6 +23,9 @@ pyproj>=3.6
 numpy>=1.26
 pandas>=2.1
 scikit-learn>=1.4
+# used directly by src/rank_municipal.py for Spearman rho (A17): the reference
+# implementation, because a hand-rolled one diverges from it under rank ties
+scipy>=1.11
 albumentations>=1.4
 pyyaml>=6.0
 tqdm>=4.66

@@ -40,7 +40,7 @@ jobs:
       # findings are fixed, so the step now gates. Widen the path list as more of
       # the repo is cleaned; do not re-add continue-on-error.
       - name: Lint (scoped to the recovery surface — blocking)
-        run: ruff check tests/ src/metrics_io.py src/data/tiling.py src/data/multiyear.py src/baselines/compare.py src/baselines/persistence.py src/train_loyo.py
+        run: ruff check tests/ src/metrics_io.py src/data/tiling.py src/data/multiyear.py src/baselines/compare.py src/baselines/persistence.py src/train_loyo.py src/rank_municipal.py
 
       - name: Gates — split isolation, config drift, metrics provenance
         run: python -m pytest -q -rs
