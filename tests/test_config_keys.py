@@ -23,7 +23,6 @@ THIS REGISTRY MUST BE UPDATED WHENEVER config/default.yaml CHANGES.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import yaml
 

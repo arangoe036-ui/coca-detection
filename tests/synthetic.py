@@ -129,8 +129,11 @@ def old_corner_rule_splits(tile_xy, block_px: int = BLOCK_PX, ratios: dict = RAT
     rng = random.Random(seed)
     rng.shuffle(blocks)
     n = len(blocks)
-    n_train = max(int(round(ratios["train"] * n)), 1 if n else 0)
-    n_val = int(round(ratios["val"] * n))
+    # round() already returns a Python int here (ratios are YAML floats, n is a
+    # len()), so no int() cast — value-identical, and the CI negative-control step
+    # plus test_old_corner_rule_would_leak both re-prove this rule still leaks.
+    n_train = max(round(ratios["train"] * n), 1 if n else 0)
+    n_val = round(ratios["val"] * n)
     assign = {}
     for i, b in enumerate(blocks):
         assign[b] = "train" if i < n_train else ("val" if i < n_train + n_val else "test")

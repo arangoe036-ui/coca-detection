@@ -32,9 +32,9 @@ def cfg_tmp(tmp_path):
 
 
 def _write(cfg, **kw):
-    base = dict(method="unet", fold_year=2020, metrics={"iou": 0.5},
-                track="A", n_train_tiles=10, n_test_tiles=2,
-                calibration_scalar=None, fit_years=[2019, 2021])
+    base = {"method": "unet", "fold_year": 2020, "metrics": {"iou": 0.5},
+            "track": "A", "n_train_tiles": 10, "n_test_tiles": 2,
+            "calibration_scalar": None, "fit_years": [2019, 2021]}
     base.update(kw)
     return write_run(cfg, **base)
 

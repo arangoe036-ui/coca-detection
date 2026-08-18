@@ -13,18 +13,34 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 JSONL_NAME = "baseline_ladder.jsonl"
 
 
 def git_commit() -> str:
+    """Short HEAD sha for the run's provenance, or ``"unknown"``.
+
+    Degrading to ``"unknown"`` is correct rather than fatal: metrics must still be
+    writable from a source tarball, a container without git, or a fresh clone
+    before the first commit. But the fallback is narrowed to the failures that can
+    actually occur, so a genuine bug in this function surfaces instead of being
+    silently relabelled as "no git here":
+
+    * ``OSError`` (incl. ``FileNotFoundError``) — git not installed or not on PATH;
+    * ``subprocess.SubprocessError`` (incl. ``CalledProcessError``) — not a repo,
+      or no commits yet, so ``rev-parse`` exits non-zero.
+
+    Note this guards **provenance only**. The append in ``write_run`` is
+    deliberately unguarded: prereg §8 makes this the single sink every reported
+    number must trace to, so a failed write must propagate, never be swallowed.
+    """
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], text=True,
             stderr=subprocess.DEVNULL).strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return "unknown"
 
 
@@ -58,7 +74,7 @@ def write_run(cfg: dict, method: str, fold_year: int, metrics: dict,
                                else float(calibration_scalar)),
         "fit_years": [int(y) for y in fit_years],
         "git_commit": git_commit(),
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "metrics": {k: (None if v is None else float(v)) for k, v in metrics.items()},
     }
     if extra:

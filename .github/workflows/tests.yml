@@ -28,11 +28,19 @@ jobs:
       - name: Install light test deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest ruff pyyaml numpy
+          # ruff is PINNED because the lint step below is blocking. Unpinned, a new
+          # ruff release can add default rules and turn CI red with no code change,
+          # which is how a gate gets disabled again. Bump deliberately, with the
+          # findings fixed in the same commit.
+          python -m pip install pytest "ruff==0.16.2" pyyaml numpy
 
-      - name: Lint (new code only — the repo has pre-existing cosmetic findings)
+      # Scoped to the recovery surface, and BLOCKING. It was advisory
+      # (continue-on-error) while those paths still carried 12 findings, which made
+      # it decorative — the same shape of defect as a guard that cannot fire. The
+      # findings are fixed, so the step now gates. Widen the path list as more of
+      # the repo is cleaned; do not re-add continue-on-error.
+      - name: Lint (scoped to the recovery surface — blocking)
         run: ruff check tests/ src/metrics_io.py src/data/tiling.py src/data/multiyear.py
-        continue-on-error: true
 
       - name: Gates — split isolation, config drift, metrics provenance
         run: python -m pytest -q -rs

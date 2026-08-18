@@ -102,7 +102,7 @@ def build_year(cfg: dict, year: int) -> list[dict]:
 
     tpx = cfg["tiling"]["tile_px"]
     stride = cfg["tiling"]["stride_px"]
-    block_px = int(round(cfg["tiling"]["split_block_km"] * 1000 / cfg["imagery"]["resolution_m"]))
+    block_px = block_px_from_cfg(cfg)
     out_dir = Path(cfg["paths"]["tiles_dir"]) / str(year)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -199,7 +199,7 @@ def build_all(cfg: dict, years: list[int], force: bool = False) -> Path:
     # Assign spatial blocks to splits ONCE (same across years) for clean LOYO, in
     # contiguous block-x bands; tiles straddling two splits are dropped.
     tpx = cfg["tiling"]["tile_px"]
-    block_px = int(round(cfg["tiling"]["split_block_km"] * 1000 / cfg["imagery"]["resolution_m"]))
+    block_px = block_px_from_cfg(cfg)
     splits, info = assign_splits([(r["x"], r["y"]) for r in all_recs], tpx, block_px,
                                  cfg["tiling"]["split_ratios"])
 

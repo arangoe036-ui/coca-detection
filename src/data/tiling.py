@@ -694,7 +694,7 @@ def tile(cfg: dict, image_path: str, mask_path: str) -> Path:
 
     tc = cfg["tiling"]
     tpx, stride = tc["tile_px"], tc["stride_px"]
-    block_px = int(round(tc["split_block_km"] * 1000 / cfg["imagery"]["resolution_m"]))
+    block_px = block_px_from_cfg(cfg)
     ensure_dirs(cfg)
     out_dir = Path(cfg["paths"]["tiles_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -740,7 +740,7 @@ def tile(cfg: dict, image_path: str, mask_path: str) -> Path:
             w.writerow([tile_id, split, r["block"], r["x"], r["y"],
                         f"{r['pos_frac']:.4f}", npz.name])
 
-    n_blocks = len(set(r["block"] for r in records))
+    n_blocks = len({r["block"] for r in records})
     print(f"[tiling] tiles={len(records)}  blocks={n_blocks}  block_px={block_px}")
     print(f"[tiling] split rule={info['split_rule']} "
           f"cuts: train<=x{info['cut_train_val_col']} val<=x{info['cut_val_test_col']}")

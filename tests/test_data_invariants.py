@@ -17,12 +17,14 @@ a fresh clone with no data. Skipped is not passed: the gate only has force once 
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 
 rasterio = pytest.importorskip("rasterio")
 
-from src.utils import load_config  # noqa: E402
+from src.utils import load_config
 
 YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
 N_S2 = 10          # s2(10) + indices(6) + s1(2)
@@ -113,7 +115,7 @@ def test_no_reflectance_step_between_adjacent_years(stats):
     if len(years) < 2:
         pytest.skip("need >=2 adjacent years")
     failures = []
-    for a, b in zip(years, years[1:]):
+    for a, b in itertools.pairwise(years):
         if b - a != 1:
             continue
         for nm in VISIBLE:
