@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -517,6 +518,78 @@ def official_canvas(cfg, year, footprint):
     return a
 
 
+def write_rgb_basemap(cfg, year, out_path, long_side=1500):
+    """True-colour Sentinel-2 for `year`, downsampled to the published grid, as a JPEG COG.
+
+    The map needs imagery a viewer can actually see. It previously used Esri World Imagery,
+    which is (a) unreachable on a client behind a restricted or tunnelled connection — the
+    same failure that blanked the whole map — and (b) an undated mosaic, so the ground under
+    a 2019 prediction might be imagery from any year. This is the *same composite the model
+    saw*, for the same year, served from this repo.
+
+    Bands 3/2/1 are B04/B03/B02 (red/green/blue) per the sidecar written next to each
+    mosaic. A 2-98 percentile stretch per band with a mild gamma is applied for display
+    only; nothing downstream reads these files.
+
+    Resolution is the same 75 m as every other published raster, and asserted here too:
+    A18 governs anything written to a tracked path, and imagery is no exception even though
+    Sentinel-2 is public and coarser-than-native by the time it lands here.
+    """
+    import rasterio
+    from rio_cogeo.cogeo import cog_translate
+    from rio_cogeo.profiles import cog_profiles
+
+    from src.nowcast import MIN_PUBLISH_RES_M
+
+    region = cfg["aoi"]["region"]
+    src_path = Path(cfg["paths"]["imagery_dir"]) / f"{region}_{year}_annual_full.tif"
+    if not src_path.exists():
+        raise FileNotFoundError(f"missing mosaic {src_path}")
+    with rasterio.open(src_path) as ds:
+        h, w = ds.height, ds.width
+        factor = max(h, w) / long_side
+        nh, nw = int(h / factor), int(w / factor)
+        out_res = abs(ds.transform.a) * (w / nw)
+        if out_res < MIN_PUBLISH_RES_M:
+            raise ValueError(
+                f"RGB basemap would publish {out_res:.2f} m, finer than the "
+                f"{MIN_PUBLISH_RES_M:.0f} m floor")
+        rgb = ds.read([3, 2, 1], out_shape=(3, nh, nw),
+                      resampling=rasterio.enums.Resampling.average).astype("float32")
+        tr = ds.transform * rasterio.Affine.scale(w / nw, h / nh)
+        crs = ds.crs
+    # ONE stretch for all three bands, not one per band. Stretching each channel to its own
+    # percentiles equalises them, which destroys the ratios that make an image true-colour:
+    # vegetation (low red, higher green) came out teal and bare soil came out pink. A shared
+    # window keeps red darker than green over forest, which is what makes it look like
+    # ordinary ground.
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
+    valid = rgb[rgb > 0]
+    lo, hi = (np.percentile(valid, [1, 99]) if valid.size else (0.0, 1.0))
+    if hi <= lo:
+        hi = lo + 1e-6
+    norm = np.clip((rgb - lo) / (hi - lo), 0, 1) ** 0.85       # mild gamma for brightness
+    out = (norm * 255).astype("uint8")
+    # Nodata at the mosaic edge is exactly 0 in every band; keep it black instead of letting
+    # the stretch lift it into a coloured frame around the study area.
+    out[:, (rgb <= 0).all(axis=0)] = 0
+    tmp = Path(tempfile.mkdtemp()) / "rgb.tif"
+    with rasterio.open(tmp, "w", driver="GTiff", height=nh, width=nw, count=3,
+                       dtype="uint8", crs=crs, transform=tr, photometric="RGB") as d:
+        d.write(out)
+    # DEFLATE, not JPEG. rio-cogeo's jpeg profile stores three-band imagery as YCbCr,
+    # and geotiff.js in the browser decodes those samples as if they were RGB — which
+    # renders vegetation teal and bare ground magenta. Costs ~2 MB more per year and is
+    # lossless; a false-colour "true colour" photo is worse than a larger file.
+    # JPEG, but forced to PHOTOMETRIC=RGB. rio-cogeo's jpeg profile defaults to YCbCr, and
+    # geotiff.js decodes those samples as if they were RGB — vegetation came out teal and bare
+    # ground magenta. Storing RGB samples keeps the 1 MB file size (deflate is 7.4 MB, which a
+    # viewer on a slow link waits on six times over) without the colour transform.
+    profile = {**cog_profiles.get("jpeg"), "photometric": "RGB"}
+    cog_translate(tmp, out_path, profile, quiet=True)
+    return out_path
+
+
 def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, crs):
     """Regenerate everything the map serves, from the out-of-fold predictions.
 
@@ -548,6 +621,9 @@ def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, c
         cog = UI_DIR / f"density_{year}_cog.tif"
         write_cog(canvases[year], profile, cog, long_side=1500,
                   quantize_scale=DENSITY_SCALE)
+        rgb_cog = UI_DIR / f"rgb_{year}_cog.tif"
+        if not rgb_cog.exists():        # imagery never changes; skip the reread on re-runs
+            write_rgb_basemap(cfg, year, rgb_cog)
         off_cog = UI_DIR / f"official_{year}_cog.tif"
         write_cog(official_canvas(cfg, year, footprints[year]), profile, off_cog,
                   long_side=1500, quantize_scale=DENSITY_SCALE)
@@ -598,11 +674,21 @@ def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, c
         csv = UI_DIR / f"municipal_coca_{year}.csv"
         gj.write_text(out.to_json(), encoding="utf-8")
         out.drop(columns="geometry").to_csv(csv, index=False, encoding="utf-8")
-        written += [cog, off_cog, gj, csv]
+        written += [cog, off_cog, rgb_cog, gj, csv]
         print(f"[a17-ui] {year}: {cog.name} + {off_cog.name} + {gj.name} + {csv.name} "
               f"({int(out['in_ranking'].sum())} ranked of {len(out)} municipalities)")
     # The undated aliases the map falls back to; kept pointing at the latest census year.
+    # Top of the shared colour scale, measured rather than guessed. It has to cover BOTH
+    # layers: the model's cover fraction peaks near 0.28 but the census's ~1 km cells reach
+    # 0.55, so a scale set from the model alone silently clipped the census's brightest
+    # squares — and the two layers must share one scale or the comparison is not a
+    # comparison. p99 across every published raster, rounded up to a clean 5%.
+    p99 = max(float(np.percentile(a[a > 0], 99)) for a in
+              [*(canvases[y] for y in YEARS),
+               *(official_canvas(cfg, y, footprints[y]) for y in YEARS)])
+    display_max = min(1.0, np.ceil(p99 * 20) / 20)
     metrics = {"data_generation": str(cfg["project"]["data_generation"]),
+               "display_max": float(display_max),
                "years": year_metrics_from_sink(cfg),
                # The map fits THIS, not the municipal envelope: two AOI municipalities
                # (Curumani, San Jose de Cucuta) extend far past the study area, so fitting

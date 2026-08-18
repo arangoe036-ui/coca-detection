@@ -1,5 +1,6 @@
 {
  "data_generation": "gen4",
+ "display_max": 0.4,
  "years": {
   "2019": {
    "null_iou": 0.9073147808958694,

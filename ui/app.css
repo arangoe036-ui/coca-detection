@@ -128,6 +128,7 @@ input[type=range]::-webkit-slider-thumb {
 input[type=range]::-moz-range-thumb {
   width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--accent); cursor: pointer;
 }
+.toggles { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); }
 .check input { accent-color: var(--accent); }
 
@@ -170,6 +171,11 @@ table.mini td { text-align: right; padding: 3px 4px; border-bottom: 1px solid va
 .attrib { font-size: 10.5px; line-height: 1.55; color: var(--line-2); border-top: 1px solid var(--line); padding-top: 14px; margin-top: auto; }
 
 /* ---- map ---- */
+/* Draw raster squares crisply instead of letting the browser smooth them. 75 m is the real
+   resolution of both the model layer and the census layer, and a blurred edge suggests a
+   precision that does not exist. It also makes the two layers directly comparable by eye:
+   the census's 1 km blocks and the model's 75 m squares are both visible as squares. */
+.leaflet-pane canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
 #map-wrap { position: relative; }
 #map { position: absolute; inset: 0; background: var(--ink); }
 .leaflet-container { background: var(--ink); font-family: inherit; }

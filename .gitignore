@@ -39,6 +39,10 @@ checkpoints/
 # finer-than-1 km information — the source cells are constant-valued — and it is public
 # data (datos.gov.co) to begin with.
 !ui/data/official_20[0-9][0-9]_cog.tif
+# True-colour Sentinel-2 for each year at the same 75 m, so the map has imagery that
+# works without internet and that MATCHES the analysis year. Public Sentinel-2, coarser
+# than its own native 10-20 m by the time it is written here.
+!ui/data/rgb_20[0-9][0-9]_cog.tif
 
 # --- Python ---
 __pycache__/
