@@ -185,11 +185,22 @@ def test_year_ratio(cfg, model, test_year, scalar, stats, device):
     return pred_ha, official, pred_ha / official if official else float("nan")
 
 
-def run_loyo(cfg, years, epochs, patience, holdout=None):
+def run_loyo(cfg, years, epochs, patience, holdout=None, *, smoke=False):
     """`holdout` (default: all `years`) restricts WHICH held-out folds to run; each
     fold still trains on all OTHER years in `years` (identical fold logic). This lets
     an interrupted run resume specific folds. Each fold is appended to
-    outputs/metrics/loyo_corrected.jsonl as it completes, so a kill loses nothing."""
+    outputs/metrics/loyo_corrected.jsonl as it completes, so a kill loses nothing.
+
+    `smoke=True` (the `--smoke` wiring test) routes BOTH artifacts to quarantined names —
+    `loyo_smoke.jsonl` and `SMOKE_fold_<year>.pt` (defect O10). Previously a 2-epoch,
+    2-year wiring test wrote its ratios into `loyo_corrected.jsonl`, the file the v2.1
+    ratio table is read from, and saved `loyo_fold_2023.pt` / `loyo_fold_2024.pt` — the
+    exact filenames a real 6-fold run produces and that a downstream script would load.
+    Two meaningless ratios (1.61, 1.33) sat in the production sink with nothing marking
+    them as a test; they are quarantined in `outputs/DISCARDED/`. Nothing distinguishes a
+    smoke artifact from a real one after the fact, so the separation has to happen at
+    write time.
+    """
     import json
     from pathlib import Path
     device = pick_device()
@@ -198,6 +209,11 @@ def run_loyo(cfg, years, epochs, patience, holdout=None):
     stats = year_norm_stats(cfg, rows)  # per-year stats over all tiles (inputs only)
     holdout = holdout or years
     out = Path(cfg["paths"]["outputs_dir"]) / "metrics"; out.mkdir(parents=True, exist_ok=True)
+    sink = out / ("loyo_smoke.jsonl" if smoke else "loyo_corrected.jsonl")
+    ck_prefix = "SMOKE_fold_" if smoke else "loyo_fold_"
+    if smoke:
+        print(f"[loyo] SMOKE run: results -> {sink.name}, checkpoints -> {ck_prefix}*.pt "
+              "(never the production names)", flush=True)
     results = []
     for test_year in holdout:
         train_years = [y for y in years if y != test_year]
@@ -211,16 +227,19 @@ def run_loyo(cfg, years, epochs, patience, holdout=None):
         print(f"[loyo] {test_year}: val_mae={vmae:.4f} scalar={s:.3f} "
               f"pred={pred_ha:,.0f} official={off_ha:,.0f} ratio={ratio:.2f}", flush=True)
         results.append((test_year, ratio, pred_ha, off_ha, s))
-        with open(out / "loyo_corrected.jsonl", "a") as fh:
+        with open(sink, "a") as fh:
             fh.write(json.dumps({"year": test_year, "ratio": ratio, "pred_ha": pred_ha,
-                                 "official_ha": off_ha, "scalar": s, "val_mae": vmae}) + "\n")
+                                 "official_ha": off_ha, "scalar": s, "val_mae": vmae,
+                                 "smoke": bool(smoke),
+                                 "data_generation": str(cfg["project"]["data_generation"]),
+                                 }) + "\n")
         # Persist per-fold weights so post-hoc gate/scalar experiments are free (no
         # retrain) — critical under job reaping. Includes the fold's norm stats.
         ck_dir = Path(cfg["paths"]["checkpoints_dir"]); ck_dir.mkdir(parents=True, exist_ok=True)
         torch.save({"model": model.state_dict(), "test_year": test_year,
                     "train_years": train_years, "scalar": s, "tau": TAU,
                     "year_stats": {int(y): (m, st) for y, (m, st) in stats.items()}},
-                   ck_dir / f"loyo_fold_{test_year}.pt")
+                   ck_dir / f"{ck_prefix}{test_year}.pt")
 
     ratios = [r for _, r, *_ in results]
     print("\n[loyo] ===== LOYO out-of-year ratio table =====")
@@ -256,11 +275,20 @@ def train_final(cfg, years, epochs, patience):
                 "year_stats": {int(y): (m, st) for y, (m, st) in stats.items()},
                 "scalar": float(s), "tau": TAU, "years": years,
                 "epochs_requested": int(epochs), "patience": int(patience),
+                # C2: `epochs_run` is the last epoch RUN, which under early stopping is
+                # best_epoch + patience — quoting it as "trained N epochs" overstates the
+                # weights' provenance by up to `patience` (the gen3 checkpoint says 17
+                # while its weights came from epoch 11). `best_epoch` is the epoch the
+                # saved weights actually came from: the last one that improved.
                 "epochs_run": len(history), "history": history,
+                "best_epoch": max((h["epoch"] for h in history if h["improved"]),
+                                  default=None),
                 "val_mae": float(vmae), "val_mae_all_zero_null": zero_mae,
                 "n_train_tiles": len(tr), "n_val_tiles": len(va),
                 "data_generation": str(cfg["project"]["data_generation"])}, out)
-    print(f"[final] epochs_run={len(history)}/{epochs} val_mae={vmae:.5f} "
+    best_ep = max((h["epoch"] for h in history if h["improved"]), default=None)
+    print(f"[final] epochs_run={len(history)}/{epochs} (weights from best_epoch={best_ep}) "
+          f"val_mae={vmae:.5f} "
           f"(all-zero null {zero_mae:.5f}) scalar={s:.3f} -> saved {out}", flush=True)
     return out
 
@@ -279,7 +307,7 @@ if __name__ == "__main__":
     args = ap.parse_args()
     cfg = load_config(args.config)
     if args.smoke:
-        run_loyo(cfg, [2023, 2024], epochs=2, patience=2)
+        run_loyo(cfg, [2023, 2024], epochs=2, patience=2, smoke=True)
     elif args.final:
         train_final(cfg, args.years, args.epochs, args.patience)
     else:

@@ -53,6 +53,21 @@ def _calib_tiles(cfg, rows, stats, predict_tile, n=200):
 
 def _unet_predictor(cfg, device):
     ck = torch.load(CKPT, map_location=device, weights_only=False)
+    # The checkpoint must come from the SAME data generation the rows are stamped with.
+    # Nothing else here would notice: the tiles on disk are gen4, `write_run` stamps gen4
+    # from the config, and a stale gen3 checkpoint loads and predicts perfectly happily —
+    # producing a row that claims to be a gen4 measurement of a model trained on a
+    # different split, i.e. one whose train blocks overlap this generation's test blocks.
+    # That is the cross-generation pairing `compare._one_generation` rejects, arriving one
+    # layer earlier where no filter can see it. Fail loudly instead.
+    want = str(cfg["project"]["data_generation"])
+    got = str(ck.get("data_generation"))
+    if got != want:
+        raise AssertionError(
+            f"{CKPT} was trained on data_generation={got!r} but the config and the tile "
+            f"index are {want!r}. Its train blocks are not this generation's train blocks, "
+            "so any metric from it is a cross-generation number. Retrain first: "
+            "`python -m src.train_loyo --final --epochs 30 --patience 6`")
     model = build_unet(cfg).to(device)
     model.load_state_dict(ck["model"])
     model.eval()

@@ -12,7 +12,10 @@ Three variants, all label-only (no imagery is opened at all):
 * ``persistence_freq_majority`` P2 at 0.5 => "present in MOST train years".
 
 Per A19 the fold's persistence score is the **maximum** of the three: declaring the max in
-advance means adding a variant can only make the U-Net's bar harder, never easier.
+advance means adding a variant can only make the U-Net's bar harder, never easier. That max is
+written to the metrics sink as its own ``persistence_max`` row, because it is the quantity A16's
+>=5/6 rule is applied to and prereg §8 allows no reported number to exist only in stdout.
+``src.baselines.compare`` reads that row to compute the rule.
 
 The tile grid is identical across years — verified on the gen4 index (prereg A20):
 **436 positions x 6 years**, every position present in every year and carrying the same
@@ -46,6 +49,14 @@ TARGET_THR = 0.0      # ground truth: the cell has any coca
 MAJORITY = 0.5
 
 METHODS = ("persistence_last_year", "persistence_freq_ever", "persistence_freq_majority")
+
+#: A19 makes the per-fold MAXIMUM of the three variants *the* persistence score — the
+#: single quantity A16's >=5/6 rule is applied to. It is written to the sink under this
+#: method name so the decision number is a row like any other, not a print. Before this
+#: existed the three variant rows were persisted and the max was only ``print``ed, which
+#: `src/metrics_io.py` forbids ("no metric may live only in stdout or prose") and which
+#: left A16's rule computed nowhere (reviewer item S3).
+SCORE_METHOD = "persistence_max"
 
 
 def _by_position(rows) -> dict:
@@ -157,8 +168,12 @@ def run(cfg, years=None):
     for test_year in years:
         train_years = [y for y in years if y != test_year]
         preds, tgt, te, p1_year = fold_predictions(cfg, rows, test_year, train_years)
-        n_train = len(C.rows_for(rows, train_years, "train"))
-        best = -1.0
+        # S6: this method fits nothing on train-split tiles — it reads the *test*-split
+        # label masks of the five other years. Recording the train-split count here (as
+        # every imagery arm does) would overstate its inputs by ~1800 tiles, so the
+        # honest value is 0 and the tiles it actually reads go in `extra` below.
+        n_source = len(C.rows_for(rows, train_years, "test"))
+        best, best_method, best_metrics, per_variant = -1.0, None, None, {}
         for method, p in preds.items():
             m = _metrics_at(p, tgt, PRESENCE_THR, t_thr=TARGET_THR)
             metrics = {"presence_iou": m["iou"], "presence_f1": m["f1"],
@@ -172,21 +187,44 @@ def run(cfg, years=None):
             extra = {"uses_imagery": False, "presence_thr": PRESENCE_THR,
                      "target_thr": TARGET_THR, "prereg": "A16/A19/A21",
                      "pred_all_zero": bool(not (p > PRESENCE_THR).any()),
-                     "n_target_positive": int((tgt > TARGET_THR).sum())}
+                     "n_target_positive": int((tgt > TARGET_THR).sum()),
+                     "reads_train_split_tiles": 0,
+                     "n_label_source_tiles": n_source}
             if method == "persistence_last_year":
                 extra["p1_source_year"] = p1_year
                 extra["p1_is_causal"] = p1_year < test_year
             if method == "persistence_freq_majority":
                 extra["majority_thr"] = MAJORITY
             write_run(cfg, method, test_year, metrics, track="A",
-                      n_train_tiles=n_train, n_test_tiles=len(te),
+                      n_train_tiles=0, n_test_tiles=len(te),
                       calibration_scalar=None, fit_years=train_years, extra=extra)
             print(f"  {test_year} {method:28s} IoU={m['iou']:.3f} F1={m['f1']:.3f} "
                   f"P={m['precision']:.3f} R={m['recall']:.3f}")
-            best = max(best, m["iou"])
+            per_variant[method] = m["iou"]
+            if m["iou"] > best:
+                best, best_method, best_metrics = m["iou"], method, m
+        # A19's decision quantity, written as its own row (S3). Its F1/precision/recall
+        # are the argmax variant's, not a max over variants — mixing arms per metric
+        # would invent a method that was never run.
+        write_run(cfg, SCORE_METHOD, test_year,
+                  {"presence_iou": best, "presence_f1": best_metrics["f1"],
+                   "presence_precision": best_metrics["precision"],
+                   "presence_recall": best_metrics["recall"],
+                   "mae": None, "rmse": None, "bias": None},
+                  track="A", n_train_tiles=0, n_test_tiles=len(te),
+                  calibration_scalar=None, fit_years=train_years,
+                  extra={"uses_imagery": False, "presence_thr": PRESENCE_THR,
+                         "target_thr": TARGET_THR, "prereg": "A16/A19/A21",
+                         "is_decision_quantity": True,
+                         "aggregation": "max over the three registered variants (A19)",
+                         "argmax_variant": best_method,
+                         "per_variant_presence_iou": per_variant,
+                         "n_target_positive": int((tgt > TARGET_THR).sum()),
+                         "reads_train_split_tiles": 0,
+                         "n_label_source_tiles": n_source})
         summary[test_year] = best
-        print(f"  {test_year} -> persistence score (max of 3) IoU={best:.3f}  "
-              f"[P1 used {p1_year}]")
+        print(f"  {test_year} -> persistence score (max of 3) IoU={best:.3f} "
+              f"[{best_method}]  [P1 used {p1_year}]")
     print("\n[persistence] per-fold bar the U-Net must beat (prereg A16):")
     for y, v in summary.items():
         print(f"        {y}: IoU={v:.3f}")
