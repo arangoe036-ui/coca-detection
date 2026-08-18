@@ -33,8 +33,10 @@ their own labels. This checks against an independent government survey.
 >   as the mechanism** rather than merely unproven, and both the aux-input design and the
 >   mixed-normalization fallback are dead. Counting routes to the Phase 6.3 hybrid anchor.
 >   See [`docs/a12_level_signal.md`](docs/a12_level_signal.md).
-> - **Still pending:** baseline-ladder re-run and one Track A retrain on the corrected
->   tiles. Until those land, every published metric remains contaminated.
+> - ~~**Still pending:** baseline-ladder re-run and one Track A retrain on the corrected
+>   tiles.~~ **Both landed 2026-08-18 on gen4** — see the 2026-08-18 update under "Where to
+>   pick up". Every metric in `outputs/metrics/baseline_ladder.jsonl` is now gen4 and backed;
+>   any figure elsewhere in this file that is not marked gen4 is superseded.
 >
 > One caveat that cannot be discharged on this machine: §8.1 requires diffing the new
 > block→split index against the old one, and `data/` was never committed, so **no old index
@@ -43,13 +45,20 @@ their own labels. This checks against an independent government survey.
 > "Identical to the split behind the published Phase 3 numbers" is therefore an assumption,
 > not a verified fact.
 
-**The project is mid-debug. Published figures in `README.md` are contaminated.**
+**The measurement phase is over as of 2026-08-18.** `README.md` now leads with the gen4
+result; the contaminated sections there are annotated, not deleted.
 
-What is **established**:
-- **Spatially the U-Net wins**: presence-IoU **0.474** vs a context-free random forest 0.260 vs
-  an NDVI threshold 0.169, 6/6 folds. Spatial context genuinely helps.
-- **At counting it loses**: `aoi_ratio` mean 0.95, std 0.271. It fails a pre-registered ≥5/6 bar
-  against **N2**, a historical-mean null that never opens a satellite image.
+What is **established (gen4, backed by `baseline_ladder.jsonl`)**:
+- **Against imagery baselines the U-Net wins**: presence-IoU **0.725** vs a context-free random
+  forest **0.346** and an NDVI threshold **0.262**, 6/6 folds. Spatial context genuinely helps
+  when imagery is all you have. *(The gen1 figures previously on this line — 0.474 / 0.260 /
+  0.169 — are retracted, not adjusted: they were computed under three defects.)*
+- **Against the previous census it loses 0/6.** The A16 persistence floor is **0.931** mean
+  (0.907–0.955 per fold) and the U-Net is 0.163–0.289 IoU below it in every fold. The spatial
+  claim is **not publishable as a model result** (frozen rule; no retuning in response).
+- **At counting it loses**: it fails a pre-registered ≥5/6 bar against **N2**, a historical-mean
+  null that never opens a satellite image. *(The specific gen1 numbers "mean 0.95, std 0.271"
+  are retracted — that spread was substantially the F1/F2 defects cancelling.)*
 - **Coca is detected by disturbance, not greenness**: the SWIR/burn-ratio complex dominates
   (NBR, B12, B11 — one physical signal), while **NDVI ranks 15/18**.
 
@@ -72,8 +81,10 @@ need a clean re-run.** `docs/BASELINE_LADDER_RESULTS.md` is annotated, not overw
 ## Scope limits that must survive into any write-up
 
 - **Labels are ~1 km and burned uniformly** (`labels.py:107-115` writes one constant density into
-  every 20 m pixel of a cell). So **IoU 0.474 is agreement with 1 km *cells*, not with fields.**
-  Nothing here can validate field-level detail.
+  every 20 m pixel of a cell). So **every IoU here — 0.725 for the U-Net, 0.931 for the
+  persistence floor — is agreement with 1 km *cells*, not with fields.** Nothing here can
+  validate field-level detail. This is also *why* the floor is so high: at 1 km granularity the
+  set of occupied cells barely moves year to year.
 - **The 2023 calibration is partly circular** — the global scalar was fit on 2023, so the 2023
   total matching official is partly by construction. The per-municipality *distribution* is still
   real evidence.
@@ -109,6 +120,22 @@ use `pathlib`. But three **runtime** defects surfaced only on Windows, all in
 3. **Resume validation must detect truncation.** A GeoTIFF truncated mid-write still opens
    and still reports the correct band count, so existence and `count` are not sufficient —
    read a far-corner pixel of the last band.
+
+### The venv can break with no code change (hit 2026-08-18)
+
+`.venv\Scripts\python.exe` started failing with **`uv trampoline failed to spawn Python child
+process - entity not found (os error 2)`**, and *nothing in the project could run*. The cause is
+not the project: uv installs its managed interpreter behind a **junction**
+(`...\uv\python\cpython-3.12-windows-x86_64-none` -> `cpython-3.12.8-...`), and Windows can stop
+traversing it (`Get-ChildItem`: *"the path cannot be traversed because it contains an untrusted
+mount point"*), so the launcher cannot find its base Python. The 5.2 GB of installed packages are
+fine - only the launcher is broken, so **do not rebuild the venv.**
+
+Fix applied here: point `.venv/pyvenv.cfg`'s `home` at the concrete versioned directory and
+replace the uv trampoline with a real `python.exe` copied from it (the old trampoline is kept as
+`.venv/Scripts/python.trampoline.exe.bak`, the config as `pyvenv.cfg.bak`). Verify with
+`.venv\Scripts\python.exe -c "import torch; print(torch.cuda.get_arch_list())"` - `sm_120` must
+appear - and `python -m pytest tests/ -q`.
 
 ### Environment that actually works (verified 2026-08-10)
 
@@ -154,7 +181,41 @@ the offset too.
 
 ## Where to pick up
 
-`docs/PHASE6_9_MASTER_PLAN.md` is the live plan. **Revised 2026-08-10** — steps 1 and the
+> ### UPDATE 2026-08-18 — steps 2, 3 and A16 are DONE; the verdict is in
+>
+> The gen4 measurement chain has been run end to end and the numbers are in
+> `outputs/metrics/baseline_ladder.jsonl` (42 rows, `data_generation: gen4`):
+>
+> * **U-Net 0.725 mean presence-IoU**, beating the random forest (0.346) and NDVI (0.262)
+>   **6/6 folds** — so "NDVI is the floor" was *not* an artifact of the offset bug.
+> * **The A16 persistence floor is 0.931** (0.907–0.955 per fold) and the U-Net beats it in
+>   **0/6 folds**, by 0.163–0.289 IoU. Per the frozen rule the spatial claim is **not
+>   publishable as a model result** and the U-Net is **not** retuned in response.
+> * Read [`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md) (top block)
+>   before touching anything: it states precisely what the null is (label-informed, opens no
+>   imagery) and what still survives as a claim.
+>
+> **What is left** is write-up and product, not measurement:
+>
+> 1. **A17 municipal ranking** — the second headline deliverable, and the one claim that can
+>    still be positive. Its design problem is still unsolved: `src/infer.py:municipal_hectares`
+>    aggregates a full-AOI prediction including trained-on blocks, so rank by mean predicted
+>    *density* over test-block pixels only. Report ρ **with** the adjacent-inversion count, n=8,
+>    and against the previous census's ranking as the null — which, given A16, will be strong.
+> 2. **Regenerate the UI artifacts** — everything in `ui/data/` is dated 2026-08-09, i.e. built
+>    from corrupted data and a stale checkpoint. Blocked on `rio_cogeo`, which is not installed
+>    and not in `requirements.txt` (defect O4), so no code here reproduces the tracked COG.
+> 3. **Figures** — the strongest is 2019's blank Sentinel-2 region with valid Sentinel-1 VV
+>    underneath: one image showing the bug, why it hid, and the fix.
+> 4. **Front-door rewrite** — lead with the two nulls that won and the two bugs that cancelled.
+> 5. **Housekeeping** — ~24 GB reclaimable (`data/tiles_gen2_leaky`, `data/tiles_gen3_misaligned`,
+>    12 stale `_sub_*.tif`, `UNALIGNED_*.tif`).
+>
+> Do **not** reopen the model. A16's rule forbids retuning in response to its own outcome, and
+> the encoder-pretraining lever (O2) is registered as a separate ablation — taking it now would
+> read as chasing the verdict.
+
+`docs/PHASE6_9_MASTER_PLAN.md` was the live plan. **Revised 2026-08-10** — steps 1 and the
 aux-retrain branch are closed; the data is rebuilt, so start at step 2:
 
 1. ~~**Gate/quantile re-test**~~ — **DONE** (A10/A11). Gate exonerated as the primary cause;

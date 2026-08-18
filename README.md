@@ -26,6 +26,38 @@ Planning docs live in [`docs/`](docs/) — [`START_HERE.md`](START_HERE.md) for 
 *(This previously pointed at `../coca-detection-build-plan.md` as "the single source of truth" — a
 parent-directory path that has never been in the repo and never can be. Corrected 2026-08-10.)*
 
+## Result (2026-08-18) — measured on gen4, both nulls won
+
+Two pre-registered no-skill nulls were run against this system. **Both beat the model**, and
+each was only discovered because it was actually computed:
+
+| question | model | no-model null | verdict |
+|---|--:|--:|---|
+| **How much** coca? (Track B, A12) | — | historical mean of past censuses | null wins; counting **out of scope** |
+| **Where** is coca? (Track A, A16) | presence-IoU **0.725** | previous census carried forward: **0.931** | null wins **6/6**; not publishable as a model result |
+
+- **Against imagery baselines the U-Net wins 6/6** — 0.725 mean presence-IoU vs a context-free
+  random forest 0.346 and an NDVI threshold 0.262. Spatial context genuinely helps *when imagery
+  is all you have*.
+- **Against the previous census it loses 0/6**, by 0.163–0.289 IoU. Coca is a perennial and the
+  labels are ~1 km census cells, so the set of occupied cells barely moves: "it is where it was"
+  already scores 0.907–0.955 and there is almost no headroom above it. The rule was frozen in
+  advance (prereg A16/A19) and the U-Net was **not** retuned in response.
+- The floor is **label-informed** — it reuses official census cells and opens no satellite image.
+  So this is not "the model cannot see coca"; it is that **free 20 m imagery adds nothing over
+  reusing the last census at the granularity the census publishes.** That is the right test,
+  because between censuses you always *have* the last census.
+
+Every figure above traces to a row in `outputs/metrics/baseline_ladder.jsonl`
+(`data_generation: gen4`, 42 rows). Fold-by-fold tables, the symmetry audit and what survives as
+a claim: [`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md).
+
+**What this project is, stated honestly:** a rigorous demonstration that free satellite imagery
+does not improve on Colombia's existing coca census at 1 km granularity — plus three real data
+defects found along the way, two of which cancelled into a *publishable-looking* number, and a
+map UI that reproduces the official spatial pattern from free data. The negative results are the
+deliverable, and they are backed; the sections below are the record of how they were reached.
+
 ## ⚠ Status of the numbers below (2026-08-10)
 
 **The P3/P4/v2.1 figures in this section were computed on contaminated imagery** and are
@@ -36,8 +68,7 @@ leave-one-year-out fold trained on those years.
 
 The offset is now **fixed and verified**: the +0.100 visible-band step at 2021→2022 is down
 to **+0.0013** on regenerated data (`scripts/acceptance_6_6b.py`), and all six years plus
-3,450 tiles have been rebuilt. **The corrected re-run of these numbers is pending.** Until
-it lands, treat every figure below as indicative of *direction* only, not magnitude — see
+3,450 tiles have been rebuilt. ~~**The corrected re-run of these numbers is pending.**~~ **It landed 2026-08-18 on gen4 — see Result above.** Until you have read that block, treat every figure below as indicative of *direction* only, not magnitude — see
 [`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md) for the detailed
 blast-radius annotation.
 
@@ -59,7 +90,7 @@ blast-radius annotation.
 - [x] **P0 — Scaffold** (repo structure, env, `config/default.yaml`, `.gitignore`, README).
 - [x] **P1 — Data** (proven end-to-end on a smoke slice). P1a ✅ imagery (Planetary Computer, 18-band GeoTIFF). P1b ✅ labels (Socrata `v3rx-q7t3` density grid → aligned mask; `acs4-3wgp` validation table). P1c ✅ tiling + spatial block split. *Next: scale to full AOI / 4 seasons for a real split (time-costly — confirm first).*
 - [x] **P2 — Baseline model.** U-Net (18-ch). Two tasks via `model.task`: **regression** (coca fraction → calibrated hectares, current default) and segmentation (binary presence). Trained on the real geographic split. **Encoder weights — corrected 2026-08-10:** the encoder is **randomly initialised**, not pretrained. `config` sets `encoder_weights: ssl4eo`, which `src/models/unet.py` routes into `geo_keys` → passes `encoder_weights=None` to `smp.Unet`, and `_load_geo_encoder_weights()` is still a **no-op that only emits a warning** (`P2 TODO`). So the config choice silently *disables* the ImageNet weights the model would otherwise receive. Two untaken levers, cheapest first: set `encoder_weights: imagenet` for real pretrained weights, or wire genuine geo-pretrained weights (SSL4EO/Prithvi/Clay).
-- [ ] **P3 — Evaluation. NUMBERS RETRACTED 2026-08-10, awaiting re-measurement.** This line
+- [x] **P3 — Evaluation. RE-MEASURED 2026-08-18 on gen4** (see Result at the top: U-Net 0.725 IoU, beats RF/NDVI 6/6, loses to the persistence floor 0/6). The retraction below stands as written — the numbers it withdraws were never adjusted, they were replaced by a fresh run on rebuilt data. This line
   previously reported cell-level presence-IoU **0.474** / F1 **0.636**. Those came from folds that
   (a) trained on offset-inflated 2022–2024, (b) used composites with 25.3% of the 2019/2020 AOI
   silently blank, and (c) used a tile→block assignment that put 13.7% of test pixels into training.
