@@ -20,9 +20,9 @@ import pytest
 
 rasterio = pytest.importorskip("rasterio")
 pytest.importorskip("rio_cogeo")
-from affine import Affine  # noqa: E402
+from affine import Affine
 
-from src.nowcast import MIN_PUBLISH_RES_M, write_cog  # noqa: E402
+from src.nowcast import MIN_PUBLISH_RES_M, write_cog
 
 # The production canvas: six identical annual mosaics, 20 m, EPSG:32618.
 CANVAS_H, CANVAS_W = 5628, 5051

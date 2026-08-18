@@ -31,6 +31,8 @@ predicted by a model that never saw it:
 from __future__ import annotations
 
 import argparse
+import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -39,7 +41,7 @@ import torch
 from src.baselines import common as C
 from src.data.tiling import split_for_block_fold
 from src.infer import _norm_name, official_municipal_ha
-from src.metrics_io import metrics_dir, write_run
+from src.metrics_io import metrics_dir, read_runs, write_run
 from src.models.unet import build_unet
 from src.train import pick_device
 from src.train_loyo import fit_scalar, read_index, set_seed, train_fold, year_norm_stats
@@ -221,7 +223,7 @@ def _predictor(cfg, ckpt_path, device):
     return predict_tile, stats, ck
 
 
-def accumulate_oof(cfg, ids, n_muni, canvases=None):
+def accumulate_oof(cfg, ids, n_muni, canvases=None, footprints=None):
     """Sum predicted and official density per (year, municipality) over out-of-fold pixels.
 
     Returns {(year, muni_idx): [sum_pred, sum_official, n_pixels]}.
@@ -236,6 +238,11 @@ def accumulate_oof(cfg, ids, n_muni, canvases=None):
     published density rasters. Only *fresh* pixels are written, so the raster the map
     serves and the numbers in the A17 table are the identical pixel set — a map that
     disagreed with its own metrics would be worse than no map.
+
+    `footprints`: optional dict receiving {year: bool array} of which pixels were scored.
+    The published official-census raster is masked to the same footprint, so the two
+    layers a viewer flips between cover identical ground; otherwise the comparison would
+    silently include census cells the model was never asked about.
     """
     device = pick_device()
     rows = read_index(cfg)
@@ -287,6 +294,8 @@ def accumulate_oof(cfg, ids, n_muni, canvases=None):
                 a[0] += float(sp[mi])
                 a[1] += float(so[mi])
                 a[2] += int(sn[mi])
+    if footprints is not None:
+        footprints.update(counted)
     union = set().union(*seen_folds)
     if len(union) != N_BLOCK_FOLDS or sum(len(f) for f in seen_folds) != N_BLOCK_FOLDS:
         raise AssertionError(
@@ -393,9 +402,118 @@ def select_members(acc, year, names, off_ha, *, px_m, min_px=MIN_OOF_PIXELS):
 
 # --------------------------------------------------------------------------- UI artifacts
 UI_DIR = Path("ui/data")
+#: Particles that GADM runs into the preceding word once camel case is split.
+_PARTICLES = r"(de|del|la|las|los|y)"
 
 
-def write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs):
+def display_name(gadm_name: str) -> str:
+    """GADM level-2 names arrive with the spaces stripped ("LaPlayadeBelen",
+    "SanJosedeCucuta"). Restore them for display only.
+
+    Matching against the census is unaffected either way — `infer._norm_name` strips
+    everything but letters — so this is presentation, not data. It is done here rather
+    than in JavaScript so the CSV a reader downloads says "El Tarra" too.
+    """
+    # 1. split camel case: a lowercase (or accented) letter followed by an uppercase one.
+    s = re.sub(r"(?<=[a-z\u00e0-\u00ff])(?=[A-Z\u00c0-\u00dd])", " ", gadm_name)
+    # 2. detach the Spanish particles step 1 leaves fused to the preceding word
+    #    ("Playade Belen" -> "Playa de Belen", "Josede Cucuta" -> "Jose de Cucuta"). The
+    #    trailing \b is what keeps "Santander" and "Sardinata" intact - their "de"/"di" is
+    #    mid-word, so no word boundary follows it.
+    s = re.sub(r"([a-z\u00e0-\u00ff])" + _PARTICLES + r"\b", r"\1 \2", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def official_ha_cached(cfg, year, retries=4, cache_dir="data/official_municipal"):
+    """`infer.official_municipal_ha` for one year, with retry and an on-disk cache.
+
+    Six live HTTP calls used to sit in the middle of this module's run, unguarded. A single
+    transient failure on datos.gov.co threw `FileNotFoundError` out of `pandas.read_json`
+    and destroyed a completed seven-minute inference pass — the same failure mode as defect
+    F5 (one dropped Azure read killing a whole year's export), which was fixed for imagery
+    and never for labels.
+
+    The cache is per (year, resource) under `data/` (gitignored). The census for a past year
+    does not change, so a cache hit is not a staleness risk; it also makes the artifacts
+    reproducible on a machine with no network, which the rebuild instructions claim.
+    """
+    import time
+
+    cache = Path(cache_dir) / f"{cfg['labels']['validation_resource_id']}_{year}.json"
+    if cache.exists():
+        return {k: float(v) for k, v in json.loads(cache.read_text(encoding="utf-8")).items()}
+    last = None
+    for attempt in range(retries):
+        try:
+            off = official_municipal_ha({**cfg, "year": year})
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(off, indent=0), encoding="utf-8")
+            return off
+        except Exception as e:                      # noqa: BLE001 - any transport failure retries
+            last = e
+            wait = 2 ** attempt
+            print(f"[a17] official {year} fetch failed ({type(e).__name__}), retry in {wait}s")
+            time.sleep(wait)
+    raise RuntimeError(
+        f"could not fetch the official municipal table for {year} after {retries} attempts "
+        f"({type(last).__name__}: {last}). The ranking is not computable without it") from last
+
+
+def year_metrics_from_sink(cfg):
+    """Per-year measured numbers for the UI, read from the metrics sink.
+
+    The map states its own verdicts, and prereg section 8 says no reported number may live
+    only in prose — a hardcoded rho in a caveat string is prose. So the panel reads the
+    same JSONL rows `docs/BASELINE_LADDER_RESULTS.md` is built from, filtered to the
+    current data generation, and renders "—" if a row is missing rather than inventing one.
+    """
+    want = str(cfg["project"]["data_generation"])
+    out: dict[str, dict] = {}
+    for r in read_runs(cfg):
+        if str(r.get("data_generation")) != want:
+            continue
+        y, m = str(r["fold_year"]), r["metrics"]
+        key = {("A", "unet"): "model_iou",
+               ("A", "persistence_max"): "null_iou",
+               ("A17", MODEL_ARM): "model_rho",
+               ("A17", NULL_ARM): "null_rho"}.get((r["track"], r["method"]))
+        if not key:
+            continue
+        d = out.setdefault(y, {})
+        d[key] = m.get("presence_iou") if key.endswith("iou") else m.get("spearman_rho")
+        if r["track"] == "A17":
+            d["model_inv" if r["method"] == MODEL_ARM else "null_inv"] =                 m.get("adjacent_inversions")
+            d["n_muni"] = m.get("n")
+    return out
+
+
+def official_canvas(cfg, year, footprint):
+    """The official ~1 km census grid, rasterised, masked to the out-of-fold footprint.
+
+    Published so the map can show model and census as the *same* kind of layer at the
+    *same* resolution over the *same* ground — which is the only way a viewer can judge
+    the claim "reproduces the official pattern" instead of taking it on trust. It is the
+    identical raster the model is trained and scored against
+    (`data/labels/<region>_<year>_annual_full_cocamask.tif`), and it carries no
+    finer-than-1 km information: every 20 m pixel in a cell holds that cell's one value,
+    so downsampling it to 75 m discards nothing and reveals nothing.
+    """
+    import rasterio
+    region = cfg["aoi"]["region"]
+    path = Path(cfg["paths"]["labels_dir"]) / f"{region}_{year}_annual_full_cocamask.tif"
+    if not path.exists():
+        raise FileNotFoundError(f"missing label raster {path}")
+    with rasterio.open(path) as ds:
+        a = ds.read(1).astype("float32")
+    if a.shape != footprint.shape:
+        raise AssertionError(
+            f"{path.name} is {a.shape}, the tile canvas is {footprint.shape} — a mask built "
+            "on one grid cannot be applied to the other")
+    a[~footprint] = 0.0
+    return a
+
+
+def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, crs):
     """Regenerate everything the map serves, from the out-of-fold predictions.
 
     Two honesty problems have to be solved here, both of which the previous artifacts got
@@ -425,6 +543,9 @@ def write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs):
     for year in YEARS:
         cog = UI_DIR / f"density_{year}_cog.tif"
         write_cog(canvases[year], profile, cog, long_side=1500)
+        off_cog = UI_DIR / f"official_{year}_cog.tif"
+        write_cog(official_canvas(cfg, year, footprints[year]), profile, off_cog,
+                  long_side=1500)
         rows = table[year]
         by_name = {r["municipio"]: r for r in rows}
         model_rank = {r["municipio"]: i + 1 for i, r in
@@ -462,7 +583,8 @@ def write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs):
             gdf[k] = [rec[k] for rec in recs]
         gdf["year"] = year
         gdf["name"] = gdf["municipio"]
-        keep = ["gid", "name", "municipio", "departamento", "year", "predicted_ha",
+        gdf["label"] = [display_name(str(n)) for n in gdf["municipio"]]
+        keep = ["gid", "name", "label", "municipio", "departamento", "year", "predicted_ha",
                 "official_ha", "ratio", "pred_oof_ha", "pred_density", "official_density",
                 "oof_px", "canvas_px", "oof_share_of_canvas", "canvas_share_hint",
                 "model_rank", "official_rank", "in_ranking"]
@@ -471,10 +593,20 @@ def write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs):
         csv = UI_DIR / f"municipal_coca_{year}.csv"
         gj.write_text(out.to_json(), encoding="utf-8")
         out.drop(columns="geometry").to_csv(csv, index=False, encoding="utf-8")
-        written += [cog, gj, csv]
-        print(f"[a17-ui] {year}: {cog.name} + {gj.name} + {csv.name} "
+        written += [cog, off_cog, gj, csv]
+        print(f"[a17-ui] {year}: {cog.name} + {off_cog.name} + {gj.name} + {csv.name} "
               f"({int(out['in_ranking'].sum())} ranked of {len(out)} municipalities)")
     # The undated aliases the map falls back to; kept pointing at the latest census year.
+    metrics = {"data_generation": str(cfg["project"]["data_generation"]),
+               "years": year_metrics_from_sink(cfg),
+               # The map fits THIS, not the municipal envelope: two AOI municipalities
+               # (Curumani, San Jose de Cucuta) extend far past the study area, so fitting
+               # their bounds opened the map two zoom levels too wide with the data as a
+               # speck in the middle.
+               "aoi_bbox": [float(v) for v in cfg["aoi"]["bbox"]],
+               "source": "outputs/metrics/baseline_ladder.jsonl"}
+    (UI_DIR / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
+    print(f"[a17-ui] metrics.json for {len(metrics['years'])} years, straight from the sink")
     latest = max(YEARS)
     for suffix in ("geojson", "csv"):
         src = UI_DIR / f"municipal_coca_{latest}.{suffix}"
@@ -491,11 +623,13 @@ def run(cfg, write_ui=False):
     # One inference pass serves both the metrics and the published rasters, so they cannot
     # drift apart. ~108 MB per year of canvas, only allocated when the rasters are wanted.
     canvases = ({y: np.zeros(shape, dtype="float32") for y in YEARS} if write_ui else None)
-    acc = accumulate_oof(cfg, ids, len(muni), canvases=canvases)
+    footprints: dict[int, np.ndarray] = {}
+    acc = accumulate_oof(cfg, ids, len(muni), canvases=canvases,
+                         footprints=footprints if write_ui else None)
 
     official = {}
     for y in YEARS:
-        official[y] = official_municipal_ha({**cfg, "year": y})
+        official[y] = official_ha_cached(cfg, y)
     names = [str(n) for n in muni["municipio"]]
     off_ha = {(y, i + 1): official[y].get(_norm_name(names[i]))
               for y in YEARS for i in range(len(names))}
@@ -605,7 +739,7 @@ def run(cfg, write_ui=False):
     print(f"\n[a17] {wins}/6 -> {call}")
     print(f"[a17] wrote {out}")
     if write_ui:
-        write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs)
+        write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, crs)
     return wins
 
 

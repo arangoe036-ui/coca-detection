@@ -17,6 +17,10 @@ ui/data/*
 !ui/data/municipal_coca_20[0-9][0-9].csv
 !ui/data/municipal_coca_20[0-9][0-9].geojson
 !ui/data/trend.json
+# Per-year measured metrics the panel renders (A16 IoU + A17 rho, model and null),
+# copied from outputs/metrics/baseline_ladder.jsonl so the UI quotes rows rather than
+# hardcoded prose. Aggregates only — no geometry, no per-cell values.
+!ui/data/metrics.json
 *.tif
 *.tiff
 *.ckpt
@@ -29,6 +33,12 @@ checkpoints/
 # above. A file must now be named density_<year>_cog.tif to be included, which cannot
 # happen by accident.
 !ui/data/density_20[0-9][0-9]_cog.tif
+# The official census grid at the same 75 m / same footprint as the model layer, so the
+# map can show "model vs census" as one comparison instead of asking for trust. Same
+# constrained naming rule: it must be official_<year>_cog.tif. It carries no
+# finer-than-1 km information — the source cells are constant-valued — and it is public
+# data (datos.gov.co) to begin with.
+!ui/data/official_20[0-9][0-9]_cog.tif
 
 # --- Python ---
 __pycache__/

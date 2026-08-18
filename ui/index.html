@@ -3,101 +3,88 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Colombia coca monitor — Catatumbo</title>
+  <title>Coca monitor — Catatumbo, Colombia</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
   <div id="app">
     <aside id="panel" aria-label="Coca monitor controls">
       <header>
-        <h1>Coca monitor</h1>
-        <p class="sub">
-          <span>Catatumbo, Norte de Santander</span>
-          <label class="year">Year
-            <select id="year" aria-label="Select year"></select>
-            <span id="nowcast-badge" class="badge" hidden title="No official census exists for this year yet (UNODC lags ~18 months). Figures are an unvalidated estimate.">nowcast · unvalidated</span>
-          </label>
-        </p>
+        <div class="brand">
+          <h1>Coca monitor</h1>
+          <span class="chip" id="gen-chip" title="Which generation of the data every number on this page was computed on.">gen4 · out-of-fold</span>
+        </div>
+        <p class="sub">Catatumbo, Norte de Santander · Sentinel-1 + Sentinel-2, free imagery</p>
+        <label class="year">Year
+          <select id="year" aria-label="Select year"></select>
+        </label>
       </header>
 
-      <section id="totals" aria-label="Area totals"></section>
-
-      <!-- "Coca trajectory — how much" chart removed 2026-08-10. It plotted a hectare
-           extrapolation to 2026, which is out of scope: this tool answers WHERE coca is,
-           not how much there is. A pre-registered test found no imagery-based estimator
-           beats a historical average at counting, so magnitude claims were withdrawn. -->
-
+      <!-- The comparison IS the deliverable: two pre-registered nulls beat this model, so
+           the honest claim is "reproduces the official pattern", and a viewer has to be
+           able to check that by eye rather than take it on trust. Same ramp, same 75 m
+           grid, same out-of-fold footprint on both sides. -->
       <section class="block">
-        <h2>Density overlay — where</h2>
-        <label class="ctl">Opacity <output id="op-val">80%</output>
-          <input id="opacity" type="range" min="0" max="100" value="80" />
-        </label>
-        <label class="ctl">Min cover shown <output id="th-val">5%</output>
-          <input id="threshold" type="range" min="0" max="30" value="5" />
-        </label>
+        <h2>Layer <span class="h2-note">same ramp · same ground</span></h2>
+        <div class="segmented" role="group" aria-label="Which layer to show">
+          <button type="button" id="lyr-model" class="seg on" aria-pressed="true">Model</button>
+          <button type="button" id="lyr-official" class="seg" aria-pressed="false">Census</button>
+          <button type="button" id="lyr-swipe" class="seg" aria-pressed="false">Compare</button>
+        </div>
+        <p class="hint" id="layer-hint">Model prediction, out-of-fold: every pixel comes from a
+          model that never trained on it.</p>
       </section>
 
-      <!-- "Measure / Draw area to sum hectares" removed 2026-08-10: a hectare-measurement
-           tool in a location-only deliverable. It also carried a real bug — setupDraw() was
-           called from loadYear(), registering a fresh pm:create handler on every year change,
-           so after switching years once the second handler deleted the rectangle the first
-           had just drawn. -->
+      <section id="scoreboard" class="block" aria-label="Measured agreement for this year"></section>
 
       <section class="block">
-        <h2>Hotspots</h2>
-        <p class="hint">Ranked by predicted hectares. Select one to fly there.</p>
+        <h2>Display</h2>
+        <label class="ctl">Opacity <output id="op-val">85%</output>
+          <input id="opacity" type="range" min="20" max="100" value="85" />
+        </label>
+        <label class="ctl">Min cover shown <output id="th-val">1%</output>
+          <input id="threshold" type="range" min="0" max="20" value="1" />
+        </label>
+        <label class="check"><input type="checkbox" id="imagery-chk" /> Satellite imagery</label>
+      </section>
+
+      <section class="block">
+        <h2>Municipal ranking <span class="h2-note" id="rank-n"></span></h2>
+        <p class="hint">By mean predicted cover. <b>M</b> = model rank, <b>C</b> = census rank —
+          a mismatch is a ranking error you can click.</p>
         <ul id="hotspots" class="hotspots"></ul>
-      </section>
-
-      <section class="block">
-        <button id="basemap-toggle" type="button">Show imagery</button>
-        <p class="hint">Zoom in past a municipality to auto-load high-resolution imagery.</p>
       </section>
 
       <details id="howto" class="block">
         <summary>How to read this</summary>
-        <div class="howto-body">
-          <p><strong>This map answers where, not how much.</strong> Hectare totals are out of
-            scope: a pre-registered test found no imagery-based estimator beats simply averaging
-            past official counts, because coca covers ~3.6% of this region and its year-to-year
-            change is under 1% of the area — far below normal seasonal variation.</p>
-          <p><strong>Ranking is the stronger claim; per-municipality accuracy varies a lot.</strong>
-            The largest municipalities rank correctly (Tibú leads every year), but agreement with
-            the official census ranges from about <strong>0.05× to 1.69×</strong> across the ten
-            municipalities. Read the ranking, not any single municipality's number.</p>
-          <p><strong>Resolution: ~1 km cells, not fields.</strong> The official labels are a ~1 km
-            grid with one value spread across every pixel of each cell, so this can only agree
-            about <em>which ~1 km cells</em> contain coca. Individual plot boundaries are never
-            resolved, and published rasters are deliberately blurred to 75 m. The satellite
-            imagery is a multi-date mosaic for visual context and may not match the analysis year.</p>
-          <p><strong>Metrics are being re-measured (2026-08-10).</strong> An internal audit found
-            two preprocessing defects and a train/test overlap in the evaluation split. Numbers
-            previously published here were withdrawn rather than adjusted; the corrected re-run is
-            pre-registered.</p>
-        </div>
+        <div class="howto-body" id="howto-body"></div>
       </details>
 
       <footer class="attrib">
-        Density: model on free Sentinel-1/2. Official: Colombia ODC / datos.gov.co.
+        Model: U-Net on free Sentinel-1 RTC + Sentinel-2 L2A (Microsoft Planetary Computer).
+        Census: Colombia SIMCI / ODC via datos.gov.co. Published rasters are blurred to 75 m
+        and aggregates are municipal — deliberately too coarse to locate a field.
       </footer>
     </aside>
 
     <div id="map-wrap">
       <div id="map"></div>
+      <div id="swipe-handle" hidden aria-hidden="true"><span></span></div>
+      <div id="swipe-labels" hidden aria-hidden="true">
+        <span class="sl left">Model</span><span class="sl right">Census</span>
+      </div>
       <div id="legend" class="legend" aria-hidden="true"></div>
+      <div id="loading" class="loading" hidden>loading…</div>
     </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
-  <script src="https://unpkg.com/geoblaze@2.8.0/dist/geoblaze.web.min.js"></script>
-  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
