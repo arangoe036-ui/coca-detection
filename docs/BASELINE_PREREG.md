@@ -1062,3 +1062,93 @@ detect. Hoisting the same check makes the module write six folds or none.
 around by catching the exception, lowering `t_thr`, or substituting `nan`/`0.0` — the correct
 response is to fix the split under A20 and rerun. Nothing about A16's ≥5/6 rule, A19's
 max-of-three, or the metric's cuts is changed by this amendment.
+
+
+---
+
+## Amendment — A22: how A17's municipal ranking is computed (2026-08-18, BEFORE it is computed)
+
+A17 fixed the ranking *metrics* in advance but left the *quantity* contaminated, and said so:
+`src/infer.py:municipal_hectares` aggregates a **full-AOI** prediction, ~70% of which is ground
+the model trained on, so a ranking built that way is partly a memory test. That was recorded as
+an unsolved design problem. This amendment settles it before any ranking number exists. It
+changes **what is aggregated**, not how the result is read: A17's metric list and its 5/6-style
+reading stand exactly as registered.
+
+### 1. Out-of-fold predictions over the whole AOI, via the A20 rotation
+
+A20 recorded `block_fold` per tile *for this purpose*: "the folds can be rotated later and every
+part of the AOI can be scored out-of-fold for the A17 municipal ranking". Six models are trained,
+one per rotation `r = 0..5`, using `tiling.split_for_block_fold(block_fold, 6, r)` to derive
+train/val/test. Each model predicts **only on its own `test` fold**, and the six test folds are
+disjoint and exhaust all 436 kept positions. Every pixel entering the ranking is therefore
+predicted by a model that never saw that ground in training or validation.
+
+* Rotation 0's split is identical to the index's own `split` column, so the existing
+  `final_multiyear.pt` **is** the rotation-0 model and is reused rather than retrained. The other
+  five are trained identically (same epochs/patience/seed/architecture) and saved as
+  `outputs/checkpoints/a17_rot<r>.pt`, each carrying `rotation`, `block_fold_test` and
+  `data_generation`.
+* Positions dropped by A20's cross-fold-overlap rule (139 of 575) are predicted by nobody and are
+  excluded from both sides of the comparison, not zero-filled. Per-municipality **coverage
+  fraction is reported** so the reader can see how much of each municipality was scored.
+
+### 2. The compared quantity: footprint-matched mean density, not hectares
+
+**Registered primary.** Per (year, municipality): the **mean predicted density** over that
+municipality's out-of-fold pixels, against the **mean official density over the identical pixel
+set**, taken from the same rasterised ~1 km official grid the model is trained and evaluated
+against. Both sides are densities on the same footprint, so the comparison is spatially held out
+and footprint-matched.
+
+Why not the original wording ("predicted vs official municipal *hectares*"): out-of-fold coverage
+is a subset of each municipality (A20 drops boundary positions, and coverage differs by
+municipality), so predicted out-of-fold hectares and a whole-municipality census total are not
+the same integral. Ratioing them would import the coverage fraction into the metric and rank
+municipalities partly by how much of them happens to be in the kept grid. Densities are
+invariant to that.
+
+**Reported secondary, for continuity with the census.** Predicted out-of-fold hectares beside the
+official whole-municipality total, with the coverage fraction, explicitly labelled **not
+footprint-matched** and excluded from the decision.
+
+### 3. Membership, fixed now so it cannot be tuned to the answer
+
+A municipality enters a year's ranking iff it (a) has an official value for that year in the
+Socrata table `acs4-3wgp`, and (b) has **>= 25,000 out-of-fold pixels** (1,000 ha at 20 m) in that
+year. **n is stated for every year and never pooled.**
+
+Note a correction to A17's own text: it says "n=8 municipalities have official values (2 of 10 do
+not)". Measured 2026-08-18 on GADM level 2 clipped to the AOI: **13** municipalities intersect the
+AOI and **9** have official values in all six years (Convencion, El Carmen, El Tarra, Hacari,
+Ocana, San Calixto, Sardinata, Teorama, Tibu; missing: Curumani, La Playa de Belen, Puerto
+Santander, San Jose de Cucuta). The "10 / n=8" figure came from `municipal_hectares`'s
+`predicted_ha > 1.0` filter -- a *prediction-dependent* membership rule, which is itself a defect:
+membership must not depend on the thing being scored. Hence rule (b) above, which depends only on
+the split geometry. Ocana's official area is 7-48 ha across the six years, so its rank is
+intrinsically noisy; it is kept (dropping it would be a post-hoc choice) and flagged.
+
+### 4. The null, and the decision rule
+
+Persistence applies here exactly as A16 applied it spatially: **reuse the previous year's official
+ranking**. The null's ranking for year *t* is the footprint-matched official density ranking of
+year *t-1*; for 2019, which has no prior year, it is **2020** -- the same non-causal choice A19
+made for P1, and for the same reason (a non-causal null can only be stronger).
+
+Per year, for both the model and the null: **Spearman rho**, **top-2 and top-3 exact hit rate**,
+**adjacent-inversion count**, and **n**. rho is never quoted without the inversion count (A17).
+
+**Decision, fixed now.** The model's rho beats the null's rho in **>=5/6 years** => the municipal
+ranking is publishable as a model result. **3-4/6** => indistinguishable from reusing the previous
+census; the claim shrinks to "reproduces the official ranking", with the previous census named as
+an equally good method. **<=2/6** => not publishable as a model result; report it as a negative
+result with the same prominence as A16's. **Ties count for the null**, which is the incumbent.
+**The model is not retuned in response**, and no municipality, year or metric is dropped after
+seeing the numbers.
+
+### 5. What is written where
+
+Every number lands in `outputs/metrics/baseline_ladder.jsonl` as rows with `track: "A17"` (one per
+year per arm, plus the per-year verdict row), stamped with `data_generation` like every other row,
+and the per-year table is written to `outputs/metrics/a17_municipal.md`. Nothing is reported from
+stdout or prose (section 8).
