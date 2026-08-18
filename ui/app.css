@@ -214,6 +214,15 @@ h2 {
 .popup-title { font-weight: 500; font-size: 14px; margin-bottom: 6px; }
 .popup-row { display: flex; justify-content: space-between; gap: 18px; color: var(--text-muted); }
 .popup-row b { font-family: var(--mono); font-weight: 500; color: var(--text); }
+/* The popup's own caveat. Deliberately not `display:none`-able and not truncated: the
+   density/hectare distinction is the difference between a like-for-like comparison and a
+   misleading one, and a caveat one click away from the number it qualifies is the failure
+   this project already made once (the 2025 nowcast popup quoted the 2023 census). */
+.popup-note {
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line);
+  font-size: 11px; line-height: 1.45; color: var(--text-muted); max-width: 300px;
+}
+.popup-note em { color: var(--text); font-style: normal; }
 
 /* ---- legend ---- */
 .legend {

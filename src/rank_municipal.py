@@ -221,7 +221,7 @@ def _predictor(cfg, ckpt_path, device):
     return predict_tile, stats, ck
 
 
-def accumulate_oof(cfg, ids, n_muni):
+def accumulate_oof(cfg, ids, n_muni, canvases=None):
     """Sum predicted and official density per (year, municipality) over out-of-fold pixels.
 
     Returns {(year, muni_idx): [sum_pred, sum_official, n_pixels]}.
@@ -231,6 +231,11 @@ def accumulate_oof(cfg, ids, n_muni):
     exactly once, regardless of how many tiles cover it. Without it the overlap strips
     would be double-weighted, which biases a *mean* density by an amount that depends on
     tile layout rather than on coca.
+
+    `canvases`: optional {year: float32 array} filled with the same predictions, for the
+    published density rasters. Only *fresh* pixels are written, so the raster the map
+    serves and the numbers in the A17 table are the identical pixel set — a map that
+    disagreed with its own metrics would be worse than no map.
     """
     device = pick_device()
     rows = read_index(cfg)
@@ -265,6 +270,9 @@ def accumulate_oof(cfg, ids, n_muni):
             sub_ids = ids[y:y + h, x:x + w]
             fresh = ~counted[year][y:y + h, x:x + w]
             counted[year][y:y + h, x:x + w] = True
+            if canvases is not None:
+                win = canvases[year][y:y + h, x:x + w]
+                win[fresh] = pred[fresh]
             flat_ids = sub_ids[fresh]
             if not flat_ids.size:
                 continue
@@ -383,12 +391,107 @@ def select_members(acc, year, names, off_ha, *, px_m, min_px=MIN_OOF_PIXELS):
     return rows
 
 
+# --------------------------------------------------------------------------- UI artifacts
+UI_DIR = Path("ui/data")
+
+
+def write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs):
+    """Regenerate everything the map serves, from the out-of-fold predictions.
+
+    Two honesty problems have to be solved here, both of which the previous artifacts got
+    wrong by construction rather than by wording:
+
+    1. **Partial coverage must not read as under-prediction.** Out-of-fold pixels cover
+       ~71% of Tibú's area, so its summed out-of-fold hectares are ~half the census total
+       for a reason that has nothing to do with the model. `predicted_ha` is therefore the
+       out-of-fold mean density extrapolated over the municipality's pixels **inside the
+       AOI canvas** — extrapolating across the dropped-tile gaps only, never outside the
+       study area. `pred_oof_ha` (measured, no extrapolation) and both coverage fractions
+       ship alongside it so the extrapolation is auditable.
+    2. **A municipality extending past the AOI still reads low**, because the census counts
+       all of it. `canvas_share` reports exactly how much of each municipality the AOI
+       contains, so a low ratio can be attributed rather than mistaken for model error.
+
+    Resolution: every raster goes through `nowcast.write_cog`, which asserts the 75 m
+    publication floor (A18) and refuses to upsample.
+    """
+    from src.nowcast import write_cog
+
+    px_ha = (cfg["imagery"]["resolution_m"] ** 2) / 1e4
+    canvas_px = np.bincount(ids.ravel(), minlength=len(muni) + 1)
+    profile = {"crs": crs, "transform": transform}
+    UI_DIR.mkdir(parents=True, exist_ok=True)
+    written = []
+    for year in YEARS:
+        cog = UI_DIR / f"density_{year}_cog.tif"
+        write_cog(canvases[year], profile, cog, long_side=1500)
+        rows = table[year]
+        by_name = {r["municipio"]: r for r in rows}
+        model_rank = {r["municipio"]: i + 1 for i, r in
+                      enumerate(sorted(rows, key=lambda r: -r["pred_density"]))}
+        off_rank = {r["municipio"]: i + 1 for i, r in
+                    enumerate(sorted(rows, key=lambda r: -r["official_density"]))}
+        gdf = muni.copy()
+        recs = []
+        for i, name in enumerate(str(n) for n in muni["municipio"]):
+            r = by_name.get(name)
+            cpx = int(canvas_px[i + 1])
+            if r is None:            # in the AOI but not in the ranking (A22 membership)
+                recs.append({"predicted_ha": None, "official_ha": None, "ratio": None,
+                             "pred_oof_ha": None, "pred_density": None,
+                             "official_density": None, "oof_px": 0, "canvas_px": cpx,
+                             "oof_share_of_canvas": None, "canvas_share_hint": None,
+                             "model_rank": None, "official_rank": None, "in_ranking": False})
+                continue
+            pred_ha = r["pred_density"] * cpx * px_ha
+            recs.append({
+                "predicted_ha": pred_ha,
+                "official_ha": r["official_muni_ha"],
+                "ratio": pred_ha / r["official_muni_ha"] if r["official_muni_ha"] else None,
+                "pred_oof_ha": r["pred_oof_ha"],
+                "pred_density": r["pred_density"],
+                "official_density": r["official_density"],
+                "oof_px": int(r["n_oof_px"]),
+                "canvas_px": cpx,
+                "oof_share_of_canvas": r["n_oof_px"] / cpx if cpx else None,
+                "canvas_share_hint": cpx * px_ha,     # AOI hectares of this municipality
+                "model_rank": model_rank[name],
+                "official_rank": off_rank[name],
+                "in_ranking": True})
+        for k in recs[0]:
+            gdf[k] = [rec[k] for rec in recs]
+        gdf["year"] = year
+        gdf["name"] = gdf["municipio"]
+        keep = ["gid", "name", "municipio", "departamento", "year", "predicted_ha",
+                "official_ha", "ratio", "pred_oof_ha", "pred_density", "official_density",
+                "oof_px", "canvas_px", "oof_share_of_canvas", "canvas_share_hint",
+                "model_rank", "official_rank", "in_ranking"]
+        out = gdf.to_crs(4326)[[*keep, "geometry"]]
+        gj = UI_DIR / f"municipal_coca_{year}.geojson"
+        csv = UI_DIR / f"municipal_coca_{year}.csv"
+        gj.write_text(out.to_json(), encoding="utf-8")
+        out.drop(columns="geometry").to_csv(csv, index=False, encoding="utf-8")
+        written += [cog, gj, csv]
+        print(f"[a17-ui] {year}: {cog.name} + {gj.name} + {csv.name} "
+              f"({int(out['in_ranking'].sum())} ranked of {len(out)} municipalities)")
+    # The undated aliases the map falls back to; kept pointing at the latest census year.
+    latest = max(YEARS)
+    for suffix in ("geojson", "csv"):
+        src = UI_DIR / f"municipal_coca_{latest}.{suffix}"
+        (UI_DIR / f"municipal_coca.{suffix}").write_bytes(src.read_bytes())
+    print(f"[a17-ui] municipal_coca.{{geojson,csv}} aliased to {latest}")
+    return written
+
+
 # ------------------------------------------------------------------------------- report
-def run(cfg):
+def run(cfg, write_ui=False):
     shape, transform, crs = canvas_geometry(cfg)
     ids, muni = municipal_id_raster(cfg, shape, transform, crs)
     print(f"[a17] canvas {shape} {crs}; {len(muni)} municipalities intersect the AOI")
-    acc = accumulate_oof(cfg, ids, len(muni))
+    # One inference pass serves both the metrics and the published rasters, so they cannot
+    # drift apart. ~108 MB per year of canvas, only allocated when the rasters are wanted.
+    canvases = ({y: np.zeros(shape, dtype="float32") for y in YEARS} if write_ui else None)
+    acc = accumulate_oof(cfg, ids, len(muni), canvases=canvases)
 
     official = {}
     for y in YEARS:
@@ -501,6 +604,8 @@ def run(cfg):
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n[a17] {wins}/6 -> {call}")
     print(f"[a17] wrote {out}")
+    if write_ui:
+        write_ui_artifacts(cfg, table, canvases, ids, muni, transform, crs)
     return wins
 
 
@@ -510,6 +615,9 @@ if __name__ == "__main__":
     ap.add_argument("--train-rotations", action="store_true",
                     help="train the per-rotation models (rotation 0 is reused)")
     ap.add_argument("--rotations", type=int, nargs="+", default=None)
+    ap.add_argument("--write-ui", action="store_true",
+                    help="also regenerate ui/data (75 m COGs + municipal aggregates) from "
+                         "the same out-of-fold pass")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=6)
     args = ap.parse_args()
@@ -517,4 +625,4 @@ if __name__ == "__main__":
     if args.train_rotations:
         train_rotations(cfg, args.epochs, args.patience, args.rotations)
     else:
-        run(cfg)
+        run(cfg, write_ui=args.write_ui)

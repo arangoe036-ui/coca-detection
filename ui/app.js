@@ -15,8 +15,16 @@
 // could not be caveated into correctness because the wrong values were inside the data.
 //
 // Every year below has a genuine census, so `official_ha` and `ratio` are now always real.
-// Only 2023 has a density overlay; loadOverlay() degrades gracefully for the others.
+//
+// 2026-08-18: regenerated on gen4 from OUT-OF-FOLD predictions (prereg A22) — six models,
+// one per spatial fold, each predicting only ground it never trained on. All six years now
+// have both a choropleth and a 75 m density COG. The previous artifacts were built
+// 2026-08-09 on gen1 data (reflectance-offset bug, 25% blank coverage, a leaky split) from
+// a checkpoint that no longer exists, and only 2023 had an overlay.
 const YEARS = [
+  { year: 2019, nowcast: false },
+  { year: 2020, nowcast: false },
+  { year: 2021, nowcast: false },
   { year: 2022, nowcast: false },
   { year: 2023, nowcast: false },
   { year: 2024, nowcast: false },
@@ -27,7 +35,10 @@ const INSPECT_ZOOM = 13;
 const ACCENT = "#e6a01f";
 const RAMP = ["#ffffe5", "#fee391", "#fe9929", "#cc4c02", "#8c2d04"]; // YlOrBr light->dark
 const BREAKS = [0, 500, 2000, 5000, 15000];      // municipal choropleth ha bins
-const MAX_FRAC = 0.26;                            // overlay normalization (COG max cover fraction)
+const MAX_FRAC = 0.29;   // overlay normalization: must be >= the COG max cover fraction,
+                         // or the top of the ramp clips silently. Measured across the six
+                         // gen4 COGs: 0.261-0.282, so 0.29 leaves a little headroom.
+                         // Was 0.26 (gen1-era), which the 2021/2023/2024 rasters exceed.
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const fmt = (v) => Math.round(v || 0).toLocaleString("en-US");
@@ -136,11 +147,30 @@ function flyToFeature(bounds) {
 }
 
 function popupHtml(p) {
+  // Municipalities inside the AOI with no official value, or too little out-of-fold
+  // coverage to score, are shown as unranked rather than as a prediction of zero. The
+  // A22 membership rule is deliberately independent of the prediction.
+  if (!p.in_ranking) {
+    return `<div class="popup-title">${p.name}</div>
+      <div class="popup-row"><span>Not ranked</span><b>—</b></div>
+      <div class="popup-note">No official census value for this year, or under the
+        out-of-fold coverage floor. Excluded from every metric.</div>`;
+  }
   const ratio = p.official_ha ? (p.predicted_ha / p.official_ha).toFixed(2) + "×" : "n/a";
+  const pct = (v) => (100 * v).toFixed(1) + "%";
+  const rank = `#${Math.round(p.model_rank)} vs #${Math.round(p.official_rank)} official`;
   return `<div class="popup-title">${p.name}</div>
+    <div class="popup-row"><span>Rank (model / official)</span><b>${rank}</b></div>
+    <div class="popup-row"><span>Density, model / official</span>
+      <b>${pct(p.pred_density)} / ${pct(p.official_density)}</b></div>
     <div class="popup-row"><span>Predicted</span><b>${fmt(p.predicted_ha)} ha</b></div>
     <div class="popup-row"><span>Official</span><b>${p.official_ha ? fmt(p.official_ha) + " ha" : "—"}</b></div>
-    <div class="popup-row"><span>Ratio</span><b>${ratio}</b></div>`;
+    <div class="popup-row"><span>Ratio</span><b>${ratio}</b></div>
+    <div class="popup-note">Density is the like-for-like figure: both sides are means over the
+      <em>same</em> ${fmt(p.oof_px)} out-of-fold pixels. Hectares are not — the model total is
+      that density extrapolated over this municipality's ${fmt(p.canvas_share_hint)} ha inside
+      the study area (${pct(p.oof_share_of_canvas)} of it directly predicted), while the census
+      counts the whole municipality. Predictions are uncalibrated.</div>`;
 }
 
 async function loadChoropleth(year) {
@@ -191,7 +221,15 @@ function buildPanel(gj) {
     document.getElementById("totals").innerHTML = `
       <div class="stat"><span>Predicted</span><b>${fmt(predTotal)}<span class="unit">ha</span></b></div>
       <div class="stat"><span>Official</span><b>${offTotal ? fmt(offTotal) : "—"}<span class="unit">ha</span></b></div>
-      <div class="stat wide"><span>Predicted / official ratio</span><b>${ratioStr}</b></div>`;
+      <div class="stat wide"><span>Predicted / official ratio</span><b>${ratioStr}</b></div>
+      <div class="caveat">Out-of-fold predictions: every pixel comes from a model that never
+        trained on it. Uncalibrated, so the total runs low — no scalar is applied because
+        fitting one to the census would make the total match by construction.
+        <strong>Two pre-registered nulls beat this model.</strong> Reusing the previous
+        census locates coca better (cell IoU 0.93 vs 0.73, 0/6 folds won) and ranks
+        municipalities better (ρ 0.98 vs 0.89, 0/6 years won). So read this map as
+        <em>reproducing</em> the official pattern from free imagery — not as improving on it.
+        Labels are ~1 km census cells, so nothing here is field-level.</div>`;
   }
 
   // No year-over-year arrows: model magnitude change is unreliable (LOYO). Trajectory
