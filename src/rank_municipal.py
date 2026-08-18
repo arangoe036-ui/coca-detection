@@ -402,6 +402,10 @@ def select_members(acc, year, names, off_ha, *, px_m, min_px=MIN_OOF_PIXELS):
 
 # --------------------------------------------------------------------------- UI artifacts
 UI_DIR = Path("ui/data")
+#: Published rasters are uint16 holding round(cover_fraction * this). 7.6 MB -> 2.5 MB
+#: per raster, worst-case error 0.00005 — 200x finer than the map's 1% threshold step.
+#: Published in metrics.json as `density_scale` so the client is not guessing.
+DENSITY_SCALE = 10_000
 #: Particles that GADM runs into the preceding word once camel case is split.
 _PARTICLES = r"(de|del|la|las|los|y)"
 
@@ -542,10 +546,11 @@ def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, c
     written = []
     for year in YEARS:
         cog = UI_DIR / f"density_{year}_cog.tif"
-        write_cog(canvases[year], profile, cog, long_side=1500)
+        write_cog(canvases[year], profile, cog, long_side=1500,
+                  quantize_scale=DENSITY_SCALE)
         off_cog = UI_DIR / f"official_{year}_cog.tif"
         write_cog(official_canvas(cfg, year, footprints[year]), profile, off_cog,
-                  long_side=1500)
+                  long_side=1500, quantize_scale=DENSITY_SCALE)
         rows = table[year]
         by_name = {r["municipio"]: r for r in rows}
         model_rank = {r["municipio"]: i + 1 for i, r in
@@ -604,6 +609,7 @@ def write_ui_artifacts(cfg, table, canvases, footprints, ids, muni, transform, c
                # their bounds opened the map two zoom levels too wide with the data as a
                # speck in the middle.
                "aoi_bbox": [float(v) for v in cfg["aoi"]["bbox"]],
+               "density_scale": DENSITY_SCALE,
                "source": "outputs/metrics/baseline_ladder.jsonl"}
     (UI_DIR / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
     print(f"[a17-ui] metrics.json for {len(metrics['years'])} years, straight from the sink")

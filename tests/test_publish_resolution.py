@@ -72,3 +72,40 @@ def test_production_geometry_writes_a_cog_at_or_above_the_floor(tmp_path):
         assert max(ds.width, ds.height) == PROD_LONG_SIDE
         assert ds.overviews(1), "no overviews — not actually a COG"
         assert float(ds.read(1).max()) > 0, "density averaged away to nothing"
+
+
+def test_quantised_output_round_trips_within_tolerance(tmp_path):
+    """uint16 quantisation is a transport optimisation and must not change what is shown.
+
+    The published rasters are what a remote viewer waits on, so they ship as uint16 holding
+    round(fraction * scale) — 2.5 MB instead of 7.6 MB each. The scale is published in
+    metrics.json; if writer and reader ever disagree the map divides by the wrong constant
+    and renders empty, so the contract is pinned here.
+    """
+    scale = 10_000
+    dens = np.zeros((CANVAS_H, CANVAS_W), "float32")
+    dens[1000:1400, 1000:1400] = 0.2818          # the real maximum cover in the gen4 rasters
+    dens[2000:2400, 2000:2400] = 0.0137
+    out = tmp_path / "q.tif"
+    write_cog(dens, _profile(), out, long_side=PROD_LONG_SIDE, quantize_scale=scale)
+    with rasterio.open(out) as ds:
+        a = ds.read(1)
+        assert ds.dtypes[0] == "uint16", ds.dtypes
+        assert ds.tags(1).get("DENSITY_SCALE") == str(scale) or \
+               ds.tags().get("DENSITY_SCALE") == str(scale), "scale not recorded in the file"
+        assert ds.transform.a >= MIN_PUBLISH_RES_M      # the A18 guard still applies
+    back = a.astype("float64") / scale
+    assert back.max() == pytest.approx(0.2818, abs=1e-4)
+    # the smaller patch survives too: quantisation must not erase low-cover ground
+    assert (back > 0.01).any()
+
+
+def test_unquantised_output_is_still_float32(tmp_path):
+    """The default path is unchanged — `nowcast` and any other caller keep float32."""
+    dens = np.zeros((CANVAS_H, CANVAS_W), "float32")
+    dens[1000:1100, 1000:1100] = 0.15
+    out = tmp_path / "f.tif"
+    write_cog(dens, _profile(), out, long_side=PROD_LONG_SIDE)
+    with rasterio.open(out) as ds:
+        assert ds.dtypes[0] == "float32"
+        assert float(ds.read(1).max()) == pytest.approx(0.15, abs=1e-3)

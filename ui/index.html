@@ -4,11 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Coca monitor — Catatumbo, Colombia</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="app.css" />
+  <!-- Everything the app NEEDS is served from this directory. Leaflet and the GeoTIFF
+       reader used to come from cdnjs/unpkg and the fonts from Google: on any client that
+       cannot reach those CDNs — a remote laptop on a tunnelled connection, a restricted
+       network, an offline demo — `L` was undefined, the whole script died on its first
+       line, and the page rendered a black rectangle with an empty year dropdown. A viewer
+       had no way to tell that from "the model predicts nothing here".
+       The only remaining network calls are basemap tiles, which are decoration: if they
+       fail the data still draws, and the app says so. -->
+  <link rel="stylesheet" href="vendor/leaflet.css" />
+  <link rel="stylesheet" href="app.css?v=3" />
 </head>
 <body>
   <div id="app">
@@ -49,7 +54,8 @@
         <label class="ctl">Min cover shown <output id="th-val">1%</output>
           <input id="threshold" type="range" min="0" max="20" value="1" />
         </label>
-        <label class="check"><input type="checkbox" id="imagery-chk" /> Satellite imagery</label>
+        <label class="check"><input type="checkbox" id="imagery-chk" /> Satellite imagery
+          <span class="net-dep" title="Needs internet: basemap tiles come from Esri.">net</span></label>
       </section>
 
       <section class="block">
@@ -79,12 +85,15 @@
       </div>
       <div id="legend" class="legend" aria-hidden="true"></div>
       <div id="loading" class="loading" hidden>loading…</div>
+      <div id="basemap-warn" class="basemap-warn" hidden>
+        Basemap tiles unavailable — data is drawn on a plain background.
+      </div>
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
-  <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
-  <script src="app.js"></script>
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/georaster.min.js"></script>
+  <script src="vendor/georaster-layer-for-leaflet.min.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

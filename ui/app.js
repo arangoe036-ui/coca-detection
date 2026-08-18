@@ -19,6 +19,25 @@
  *   data/metrics.json
  */
 
+/* Fail visibly, never blankly. If a vendor script is missing the old code threw
+ * "L is not defined" on its first statement and left a black rectangle with an empty year
+ * dropdown — indistinguishable, to a viewer, from "the model found nothing here". */
+(function requireDeps() {
+  const missing = [];
+  if (typeof L === "undefined") missing.push("vendor/leaflet.js");
+  if (typeof parseGeoraster === "undefined") missing.push("vendor/georaster.min.js");
+  if (typeof GeoRasterLayer === "undefined") missing.push("vendor/georaster-layer-for-leaflet.min.js");
+  if (!missing.length) return;
+  const el = document.getElementById("map");
+  if (el) {
+    el.innerHTML = `<div class="fatal"><b>The map could not start.</b>
+      <span>These files failed to load:</span><code>${missing.join("<br>")}</code>
+      <span>They are served from this site, so this is a serving or file-permission
+      problem, not a network one. Everything else on the page is unaffected.</span></div>`;
+  }
+  throw new Error("missing vendor assets: " + missing.join(", "));
+})();
+
 const YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
 const INSPECT_ZOOM = 13;
 
@@ -32,6 +51,11 @@ const ACCENT = "#f0a02a";
 const MAX_FRAC = 0.29;   /* Ramp top. Must be >= the max cover fraction in any published
                           * COG or the ramp clips silently; measured across the twelve gen4
                           * rasters: 0.261–0.282. Was 0.26, which three of them exceeded. */
+/* Published rasters are uint16 holding round(cover_fraction * DENSITY_SCALE) — 2.5 MB
+ * instead of 7.6 MB each, which is what a viewer on a tunnelled connection waits on. The
+ * authoritative value is `density_scale` in metrics.json; this constant only matches the
+ * writer so a missing metrics.json degrades to correct rather than to a saturated map. */
+let densityScale = 10000;
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const fmt = (v) => Math.round(v || 0).toLocaleString("en-US");
@@ -52,9 +76,17 @@ const map = L.map("map", { zoomControl: true, minZoom: 6, maxZoom: 18, zoomSnap:
   .setView([8.8, -72.85], 9);
 L.control.scale({ imperial: false, position: "bottomleft" }).addTo(map);
 
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+const baseLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "© OpenStreetMap · © CARTO", maxZoom: 20, className: "basemap-dark",
 }).addTo(map);
+/* Basemap tiles are the one remaining network dependency, and they are decoration: the
+ * data layers are local files. Tell the viewer rather than leaving them to wonder whether
+ * the emptiness is the map or the model. */
+let tileErrors = 0;
+baseLayer.on("tileerror", () => {
+  if (++tileErrors === 6) document.getElementById("basemap-warn").hidden = false;
+});
+baseLayer.on("tileload", () => { document.getElementById("basemap-warn").hidden = true; });
 
 map.createPane("imagery");
 const imgPane = map.getPane("imagery");
@@ -102,8 +134,10 @@ const layersByName = new Map();
 
 // ---- density rasters ---------------------------------------------------------
 function colorFn(vals) {
-  const f = vals[0];
-  if (f == null || Number.isNaN(f) || f <= 0 || f < threshold) return null;
+  const raw = vals[0];
+  if (raw == null || Number.isNaN(raw) || raw <= 0) return null;
+  const f = raw / densityScale;
+  if (f < threshold) return null;
   const [r, g, b] = rampRGB(f / MAX_FRAC);
   /* Alpha rises with cover instead of a hard on/off at the threshold. The old hard cut
    * turned a continuous field into binary speckle, which is what made the layer read as
@@ -140,7 +174,10 @@ function renderLayers() {
 async function loadRasters(year) {
   const get = async (kind) => {
     try {
-      const res = await fetch(`data/${kind}_${year}_cog.tif`);
+      /* ?v is not decoration: the rasters changed dtype in this revision, and a browser
+       * serving a cached float32 raster against the new uint16 scale would divide by
+       * 10000 and render an empty map. */
+      const res = await fetch(`data/${kind}_${year}_cog.tif?v=3`);
       if (!res.ok) throw new Error(`${kind} ${res.status}`);
       return await parseGeoraster(await res.arrayBuffer());
     } catch (e) {
@@ -451,6 +488,7 @@ yearSel.onchange = (e) => loadYear(Number(e.target.value));
   } catch (e) {
     console.warn("metrics.json unavailable — the scoreboard will show em dashes", e);
   }
+  if (allMetrics && allMetrics.density_scale) densityScale = allMetrics.density_scale;
   if (allMetrics && allMetrics.data_generation) {
     document.getElementById("gen-chip").textContent = `${allMetrics.data_generation} · out-of-fold`;
   }

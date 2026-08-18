@@ -62,5 +62,6 @@
   -72.4,
   9.3
  ],
+ "density_scale": 10000,
  "source": "outputs/metrics/baseline_ladder.jsonl"
 }

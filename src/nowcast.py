@@ -50,7 +50,8 @@ def year_stats_from_raster(image_path: str, factor: int = 8):
 MIN_PUBLISH_RES_M = 75.0
 
 
-def write_cog(density: np.ndarray, profile, out_path: Path, long_side: int = 1500):
+def write_cog(density: np.ndarray, profile, out_path: Path, long_side: int = 1500,
+              quantize_scale: int | None = None):
     """Downsample `density` and write a COG.
 
     `long_side` is a PIXEL COUNT, not a resolution — so the 75 m figure everyone quotes was
@@ -59,6 +60,15 @@ def write_cog(density: np.ndarray, profile, out_path: Path, long_side: int = 150
     function would UPSAMPLE past the native 20 m grid and write it to a tracked directory with
     no error at all. That is the one irreversible mistake this project could make, so the
     resolution is now checked rather than assumed (prereg A18).
+
+    `quantize_scale`: if set, the output is written as **uint16** holding
+    ``round(cover_fraction * quantize_scale)`` instead of float32. Cover fractions live in
+    [0, 0.3], so float32 spends 32 bits on ~9 bits of real signal and compresses badly
+    because the low mantissa bits are noise: at scale 10000 the published raster drops from
+    7.6 MB to 2.5 MB with a worst-case error of 0.00005, which is 200x finer than the 1%
+    step of the map's own threshold control. This matters because the rasters are what a
+    remote viewer waits on. Consumers must divide by the same scale — it is published in
+    `ui/data/metrics.json` as `density_scale` rather than agreed by convention.
     """
     # Resolution checks run BEFORE any import: `rio_cogeo` is not even installed in this
     # environment, so importing first made the guard unreachable — it would raise
@@ -99,10 +109,19 @@ def write_cog(density: np.ndarray, profile, out_path: Path, long_side: int = 150
         small = ds.read(1, out_shape=(nh, nw), resampling=Resampling.average)
         tr = ds.transform * Affine.scale(w / nw, h / nh)
     tmp = tempfile.mktemp(suffix=".tif")
-    with rasterio.open(tmp, "w", driver="GTiff", height=nh, width=nw, count=1, dtype="float32",
+    if quantize_scale:
+        # Quantise AFTER the average-resampling so the downsample keeps full precision.
+        dtype = "uint16"
+        band = np.clip(np.rint(small * quantize_scale), 0, np.iinfo(dtype).max).astype(dtype)
+    else:
+        dtype, band = "float32", small.astype("float32")
+    with rasterio.open(tmp, "w", driver="GTiff", height=nh, width=nw, count=1, dtype=dtype,
                        crs=profile["crs"], transform=tr, nodata=0) as d:
-        d.write(small.astype("float32"), 1)
-    cog_translate(tmp, out_path, cog_profiles.get("deflate"), quiet=True)
+        d.write(band, 1)
+        if quantize_scale:
+            d.update_tags(DENSITY_SCALE=str(int(quantize_scale)))
+    cog_translate(tmp, out_path, cog_profiles.get("deflate"), quiet=True,
+                  forward_band_tags=True)
 
 
 def nowcast(cfg, year: int, reference: int):
