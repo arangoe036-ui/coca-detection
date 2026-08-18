@@ -307,10 +307,14 @@ def main(cfg):
                    "against the retracted gen1 U-Net constants. Counting is a retired "
                    "deliverable (A12: the level signal does not exist).")]
     out = Path(cfg["paths"]["outputs_dir"]) / "metrics"
-    (out / "ladder_table.md").write_text("\n".join(lines) + "\n")
+    # encoding is explicit: the tables carry →, ≥, δ, — and the default on Windows is
+    # cp1252, which raises UnicodeEncodeError. It had never fired because these tables
+    # had never been generated on this platform — the same class of latent portability
+    # defect as the three that surfaced in stac_export.py.
+    (out / "ladder_table.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     # CSV: one row per (track, method, year)
     import csv
-    with open(out / "ladder_table.csv", "w", newline="") as fh:
+    with open(out / "ladder_table.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["track", "method", "fold_year", "aoi_ratio", "mae", "rmse",
                     "presence_iou", "presence_f1", "calibration_scalar"])

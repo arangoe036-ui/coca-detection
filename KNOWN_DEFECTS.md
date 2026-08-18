@@ -45,7 +45,7 @@ obviously broken number; it produced a *publishable* one. That is why it survive
 | O4 | `rio_cogeo` is not in `requirements.txt` and is not installed, so `write_cog` cannot run | out of the current cycle | **no code in this repo reproduces the tracked `ui/data/density_2023_cog.tif`** |
 | O5 | `src/nowcast.py` never sets `cfg["year"]`, so its outputs carried the wrong year's census | its artifacts were deleted and hectares are out of scope; the code remains | none — outputs removed |
 | O6 | The 2023 calibration scalar is fitted to the same year's census (`src/infer.py:218`) | inherent to the method | the 2023 total matching official is arithmetic, not evidence. Hectares out of scope |
-| O7 | Test split lands at ~10% of tiles rather than the 15% target after the leak fix | bands are whole 500 px block columns, so achievable sizes are coarse | 50 test tiles/year, 300 across six years — thin, disclose n |
+| O7 | Test split lands at ~10% of tiles rather than the 15% target after the leak fix | bands are whole 500 px block columns, so achievable sizes are coarse | gen3: 50 test tiles/year. **Under gen4/A20 it is 80/year, 480 across six years** (292/64/80 train/val/test per year), and every fold is positive-bearing — still thin, still disclose n |
 | O8 | `_subtile_bboxes` can emit a zero-width sub-tile for some bbox/step combinations | production geometry verified unaffected | none for Catatumbo |
 
 ## Retracted claims
@@ -60,7 +60,22 @@ Numbers withdrawn rather than adjusted, because the runs behind them no longer e
 - **A12's B11/B12 correlations** (`+0.355`, `+0.050`) — footprint artifacts; on a fixed footprint
   both flip sign (−0.621, −0.709). A12's *verdict* is unchanged.
 
-## Not yet measured, and it could sink the headline
+## MEASURED 2026-08-18 — it sank the headline (was: "not yet measured")
+
+> **A16 ran on gen4. The U-Net beats the persistence floor in 0 of 6 folds** (its IoU
+> 0.666–0.780 against the floor's 0.907–0.955; margins −0.163 to −0.289). Per the rule
+> below, the spatial claim is **not publishable as a model result** and is reported as a
+> negative result with the same prominence as the counting one. The U-Net is **not** being
+> retuned in response. Fold-by-fold table, the exact framing of what the null is, and what
+> survives as a claim: the gen4 block at the top of
+> [`docs/BASELINE_LADDER_RESULTS.md`](docs/BASELINE_LADDER_RESULTS.md). All 42 rows are in
+> `outputs/metrics/baseline_ladder.jsonl` under `data_generation: gen4`.
+>
+> Both of this project's headline claims have now been beaten by a no-model null that was
+> only found because someone ran it — the historical mean at counting, the previous census
+> at locating. The section below is the *ex ante* text, kept unedited.
+
+### Original entry (ex ante): Not yet measured, and it could sink the headline
 
 **There is no no-skill floor for the spatial claim.** Coca is a perennial, so "it is where it was
 last year" is a strong predictor and has never been computed. Registered as **A16** with the
@@ -88,14 +103,19 @@ a no-model historical mean won and was only discovered because someone ran it.
 >   deliberately blanked split. (A test count was quoted here on 2026-08-14 and was wrong twice;
 >   it is a short-half-life fact and does not belong in a permanent register — run the suite.)
 > - Fix-path steps 1–3 and 5 (agree the design, register it, add the invariant, reassign) are
->   **done**. Step 4 — the `src/baselines/persistence.py` degeneracy guard (S2) — is **NOT
->   done**, and neither is `compare._dedup_last` keying on `data_generation`. Until those land,
->   nothing stops a *future* all-negative target from printing `0.000` again, and nothing stops
->   a gen3 row being deduplicated against a gen4 one.
+>   **done**. Step 4 and the dedup fix are **also done as of 2026-08-18** (commits `fad375b`,
+>   `9b82234`): the degeneracy guard now lives in `src/evaluate._metrics_at` itself, one layer
+>   below `persistence.py`, so it protects **every** arm and raises `DegenerateComparison`
+>   rather than returning a 0/0 as `0.000` (prereg A21); `persistence.preflight` validates all
+>   six folds before the first row is appended; and `compare._dedup_last` keys on
+>   `data_generation` while `_one_generation` refuses to put two generations in one table.
+>   Each guard has a test that proves it fires, including the gen3-`0.000`-vs-gen4-U-Net
+>   pairing that would have manufactured a false 6/6.
 > - **The blast radius is unchanged and still binding: every Track A number computed on gen3 is
->   void.** No retrain has been run on gen4 and `outputs/metrics/baseline_ladder.jsonl` still
->   does not exist, so there is nothing yet to compare. gen4 also trains on **22.1% fewer train
->   rows** (2250 → 1752), so a gen4 result is not comparable to a gen3 one for that reason too.
+>   void.** As of 2026-08-18 the gen4 retrain has been run and
+>   `outputs/metrics/baseline_ladder.jsonl` holds **42 gen4 rows** — the project's first backed
+>   Track A numbers. gen4 trains on **22.1% fewer train rows** (2250 → 1752), so a gen4 result
+>   is still not comparable to a gen3 one and no cross-generation comparison is drawn anywhere.
 
 
 Found by a `reviewer` audit, confirmed independently. On the gen3 build:
@@ -172,4 +192,4 @@ saved `outputs/checkpoints/loyo_fold_2023.pt` / `loyo_fold_2024.pt`, the **exact
 real 6-fold run produces and that a downstream Track B script would load. Two meaningless ratios
 (1.61, 1.33) sat in the production sink with nothing marking them as a wiring test. All four
 artifacts moved to `outputs/DISCARDED/` with a README. The code change routing `--smoke` to
-`loyo_smoke.jsonl` / `SMOKE_fold_*.pt` is **not yet made** — verify before the next smoke run.
+`loyo_smoke.jsonl` / `SMOKE_fold_*.pt` was **made 2026-08-18** (commit `9b82234`): `run_loyo(..., smoke=True)` routes the sink and the checkpoint prefix, and smoke rows additionally carry `smoke: true` and `data_generation`. **CLOSED.**

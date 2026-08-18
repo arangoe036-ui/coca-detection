@@ -1,5 +1,107 @@
 # Baseline Ladder — Results
 
+> ## RESULT — gen4 re-run, 2026-08-18: the A16 persistence null is measured, and the U-Net loses 0/6
+>
+> This block is the **current result**. Everything below it is the gen1 run and is
+> contaminated (annotated 2026-08-10, kept per the no-overwrite rule). The two are not
+> comparable: gen4 rebuilt the evaluation split under prereg A20 and trains on 22% fewer
+> rows than gen3, which itself is not gen1.
+>
+> Provenance: `outputs/metrics/baseline_ladder.jsonl`, 42 gen4 rows, commit `9b82234`,
+> checkpoint `final_multiyear.pt` (gen4, 13 epochs, **weights from best_epoch 7**,
+> `val_mae` 0.01940 vs all-zero null 0.02784, scalar 1.250, 1752 train / 384 val tiles).
+> Reproduce: `python -m src.train_loyo --final --epochs 30 --patience 6`, then
+> `python -m src.baselines.persistence`, `python -m src.baselines.track_a`,
+> `python -m src.baselines.compare`. 80 test tiles per year, all six years positive-bearing.
+>
+> ### Track A — presence-IoU on the held-out `test` blocks (1 km cells, thr 0.02 / t_thr 0.0)
+>
+> | fold | U-Net | Random forest | NDVI thr | P1 last year | P2 ever | P2 majority | **persistence score** | δ (U−P) |
+> |---|--:|--:|--:|--:|--:|--:|--:|--:|
+> | 2019 | 0.711 | 0.320 | 0.254 | 0.907 | 0.886 | 0.871 | **0.907** | −0.196 |
+> | 2020 | 0.698 | 0.378 | 0.243 | 0.907 | 0.866 | 0.860 | **0.907** | −0.209 |
+> | 2021 | 0.756 | 0.368 | 0.252 | 0.881 | 0.905 | 0.922 | **0.922** | −0.166 |
+> | 2022 | 0.780 | 0.341 | 0.266 | 0.914 | 0.943 | 0.937 | **0.943** | −0.163 |
+> | 2023 | 0.741 | 0.329 | 0.273 | 0.949 | 0.912 | 0.917 | **0.949** | −0.208 |
+> | 2024 | 0.666 | 0.342 | 0.283 | 0.955 | 0.936 | 0.928 | **0.955** | −0.289 |
+> | **mean** | **0.725** | 0.346 | 0.262 | 0.919 | 0.908 | 0.906 | **0.931** | −0.205 |
+>
+> ### The two verdicts, both applied verbatim
+>
+> **prereg §5 (vs the imagery baselines): U-Net wins 6/6.** 0.725 mean IoU against 0.346
+> (random forest) and 0.262 (NDVI threshold), every fold, no fold close. Spatial context
+> genuinely helps *when imagery is all you have* — and NDVI remains the floor of the three
+> even on corrected data, so that ordering was not an artifact of the offset bug.
+>
+> **prereg A16 (vs the no-skill floor): U-Net loses 0/6 → the spatial claim is NOT
+> publishable as a model result.** The margin is −0.163 to −0.289 IoU, never within noise
+> of the bar, so no reading of the rule rescues it. Per A16 this is reported as a negative
+> result with the same prominence as the counting one, and **the U-Net is not retuned in
+> response**. The ≥5/6 bar and the max-of-three aggregation were both fixed in writing
+> before any of these numbers existed (A16, A19), and the floor was computed and written to
+> the sink *before* the U-Net was retrained.
+>
+> ### What the null actually is, stated precisely
+>
+> The persistence score is **label-informed**: it is the previous (or, per A19's max, any
+> other) year's *official census presence mask* for the same 1 km cells, carried forward
+> unchanged. It opens no satellite image. So the finding is **not** "the model cannot see
+> coca" — 0.725 IoU from imagery alone, against a census it never saw, is real skill, and
+> it more than doubles the best imagery baseline. The finding is:
+>
+> > **At ~1 km cell granularity, satellite imagery adds nothing over simply reusing the
+> > previous census.** Coca is a perennial and the *set* of cells containing it barely
+> > moves year to year, so the trivially-available prior is already at 0.91–0.96 IoU and
+> > there is almost no headroom above it.
+>
+> This is the correct framing for the actual deployment question, not a technicality:
+> between censuses you always *have* the last census. A monitoring tool has to beat it.
+>
+> Two structural reasons the ceiling is where it is, both pre-existing and disclosed:
+> labels are ~1 km census cells burned uniformly into every 20 m pixel
+> (`src/data/labels.py:107`), so this metric can only ever measure agreement about
+> *which cells*, never field-level detail; and the quantity being predicted is nearly
+> static, which is exactly what makes persistence strong.
+>
+> ### Symmetry of the comparison (audited, not assumed)
+>
+> * Identical metric, identical cuts, identical rows: every arm goes through
+>   `src/evaluate._metrics_at(pred, target, thr=0.02, t_thr=0.0)` on the same test rows in
+>   the same order (persistence via a direct call, the imagery arms via
+>   `_evaluate_regression`). Confirmed by reading both call paths.
+> * The U-Net's predictions are multiplied by the A5 density calibration `a = 1.009`
+>   (train-blocks only) before metrics — near enough to 1 that it moves nothing here.
+> * The floor is the **max** of three variants (A19), declared in advance, so adding
+>   variants could only ever raise the U-Net's bar.
+> * The split is leak-free by pixel and signal-bearing in every fold (A20): 0 unresolved
+>   cross-fold overlaps, 80 test tiles/year, 33–35 of them containing coca every year.
+>   Leak-freeness is **not** claimed beyond pixel disjointness — the cross-fold gap is
+>   192 px (3.84 km) and coca autocorrelates past 10 km (defect O3). That residual
+>   autocorrelation flatters the *U-Net*, the arm with the receptive field to exploit it,
+>   which makes the 0/6 loss more robust rather than less.
+>
+> ### What survives as a claim
+>
+> 1. **The map is real and useful; the *model* is not the contribution.** The system
+>    reproduces the official spatial pattern from free imagery, and persistence must be
+>    named as an equally good — in fact better — method for "which cells have coca".
+> 2. **Spatial context beats context-free imagery baselines 6/6** (0.725 vs 0.346/0.262).
+>    That is a genuine, backed, pre-registered result. It is a statement about imagery
+>    methods, not a claim to beat the census.
+> 3. **The negative results are the deliverable**, and there are now two of them, each
+>    caught only because the null was actually run: a historical mean beats the model at
+>    counting (Track B / A12), and last year's census beats it at locating (A16). The
+>    honest summary of this project is a rigorous demonstration that free 20 m imagery
+>    does not improve on Colombia's existing census at the granularity the census
+>    publishes — plus the three data defects found along the way, two of which cancelled
+>    into a publishable-looking number.
+>
+> ### What this closes
+>
+> `KNOWN_DEFECTS.md`'s "Not yet measured, and it could sink the headline" is now measured.
+> It sank the headline. That is the register working as intended.
+
+
 > ## ⚠ NUMBERS BELOW ARE CONTAMINATED — annotation added 2026-08-10 (Phase 6.6d)
 >
 > Every figure in this document was computed **before** the Sentinel-2 baseline-04.00
